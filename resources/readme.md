@@ -1,5 +1,3 @@
----
-
 ## How MontyMate loads resources
 
 At runtime, MontyMate resolves a complete “run configuration” by combining:
@@ -16,8 +14,6 @@ When MontyMate is installed as a Python package, resources should be loaded via 
 
 ### Shipping these YAML files
 If you ship these defaults inside the Python distribution, you must ensure they’re included as package data (setuptools supports multiple ways of including data files). 
-
----
 
 ## Conventions used in this repo
 
