@@ -1,0 +1,77 @@
+#This is a contract for what the interviewer must produce in spec.yaml (YAML canonical). It’s not a JSON Schema—just a clear YAML spec for your system.
+module_spec_schema:
+  version: 1
+
+required_fields:
+  - status
+  - project_profile
+  - intent
+  - constraints
+  - acceptance_criteria
+
+fields:
+  status:
+    type: enum
+    values: ["DRAFT", "LOCKED"]
+
+  project_profile:
+    type: enum
+    values: ["fastapi_service", "python_cli", "python_library"]
+
+  intent:
+    type: object
+    required: ["kind", "name", "summary"]
+    fields:
+      kind:
+        type: enum
+        values:
+          ["new_module", "modify_endpoint", "modify_command", "modify_api"]
+      name:
+        type: string
+      summary:
+        type: string
+      domain:
+        type: string
+        optional: true
+      external_integrations:
+        type: boolean
+        default: false
+      # For modify_endpoint (FastAPI)
+      target_endpoint:
+        type: object
+        optional: true
+        fields:
+          method:
+            { type: enum, values: ["GET", "POST", "PUT", "PATCH", "DELETE"] }
+          path: { type: string }
+          description: { type: string }
+
+  constraints:
+    type: object
+    required: ["privacy", "security"]
+    fields:
+      privacy:
+        type: object
+        fields:
+          pii:
+            {
+              type: enum,
+              values: ["none", "low", "medium", "high"],
+              default: "none",
+            }
+      security:
+        type: object
+        fields:
+          auth_required: { type: boolean, default: false }
+
+  dependencies:
+    type: object
+    optional: true
+    fields:
+      add_new_dependencies: { type: boolean, default: false }
+      allowed_licenses:
+        { type: list, default: ["MIT", "Apache-2.0", "BSD-3-Clause"] }
+
+  acceptance_criteria:
+    type: list
+    items: { type: string }

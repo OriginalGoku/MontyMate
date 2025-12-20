@@ -1,0 +1,77 @@
+policy:
+  id: default_python_cli_policy
+  version: 1
+
+defaults:
+  change_class: new_module
+  risk_level: low
+
+  requires:
+    requires_research: false
+    requires_architecture: true
+    requires_arch_lock: false # CLI often doesn't need formal lock; can turn on later
+    requires_audit: true
+    requires_repo_analysis: false
+    requires_failing_test_first: false
+    requires_integration_guide: true
+
+  gates:
+    pytest: { required: true, args: ["-q"], timeout_s: 900 }
+    ruff: { required: true, mode: "check", args: [], timeout_s: 300 }
+    mypy: { required: false, args: [], timeout_s: 600 }
+    security_scan:
+      { required: false, tool: "pip_audit", args: [], timeout_s: 600 }
+
+  patch_limits:
+    max_files: 6
+    max_loc: 350
+    allowlist_paths: []
+    denylist_paths: []
+    require_small_patches: true
+
+  approvals:
+    dependency_addition: { required: false }
+    scope_expansion: { required: false }
+    high_risk_change: { required: false }
+
+  cost_policy:
+    budget_usd: { warn_at: 8.0, stop_at: 20.0 }
+    require_cost_estimate_before_build: false
+
+classify_change:
+  - when:
+      equals: { left: { ref: "module_spec.intent.kind" }, right: "new_module" }
+    set: { change_class: new_module }
+
+  - when:
+      equals:
+        { left: { ref: "module_spec.intent.kind" }, right: "modify_command" }
+    set: { change_class: modify_command }
+
+risk_signals:
+  - when:
+      equals:
+        {
+          left: { ref: "module_spec.constraints.security.auth_required" },
+          right: true,
+        }
+    add: 2
+    reason: "Auth involved"
+
+risk_levels:
+  - when: { lte: { left: { ref: "risk_score" }, right: 1 } }
+    set: { risk_level: low }
+  - when: { lte: { left: { ref: "risk_score" }, right: 3 } }
+    set: { risk_level: medium }
+  - when: { gte: { left: { ref: "risk_score" }, right: 4 } }
+    set: { risk_level: high }
+
+rules:
+  - when: { equals: { left: { ref: "change_class" }, right: "modify_command" } }
+    set:
+      requires:
+        requires_repo_analysis: true
+        requires_failing_test_first: true
+      patch_limits:
+        max_files: 3
+        max_loc: 120

@@ -1,0 +1,73 @@
+decision_record_schema:
+  version: 1
+
+required_fields:
+  - change_class
+  - risk_level
+  - requires
+  - gates
+  - patch_limits
+  - approvals
+  - cost_policy
+
+fields:
+  change_class:
+    type: enum
+    values: ["new_module", "modify_endpoint", "modify_command", "modify_api"]
+
+  risk_level:
+    type: enum
+    values: ["low", "medium", "high"]
+
+  requires:
+    type: object
+    required:
+      - requires_research
+      - requires_architecture
+      - requires_arch_lock
+      - requires_audit
+      - requires_repo_analysis
+      - requires_failing_test_first
+      - requires_integration_guide
+
+  gates:
+    type: map
+    keys: ["pytest", "ruff", "mypy", "security_scan"]
+    values:
+      type: object
+      required: ["required"]
+      fields:
+        required: { type: boolean }
+        args: { type: list, optional: true }
+        timeout_s: { type: integer, optional: true }
+        mode: { type: string, optional: true }
+        tool: { type: string, optional: true }
+
+  patch_limits:
+    type: object
+    required: ["max_files", "max_loc", "require_small_patches"]
+    fields:
+      max_files: { type: integer }
+      max_loc: { type: integer }
+      allowlist_paths: { type: list, optional: true }
+      denylist_paths: { type: list, optional: true }
+      require_small_patches: { type: boolean }
+
+  approvals:
+    type: object
+    fields:
+      dependency_addition:
+        { type: object, fields: { required: { type: boolean } } }
+      scope_expansion: { type: object, fields: { required: { type: boolean } } }
+      high_risk_change:
+        { type: object, fields: { required: { type: boolean } } }
+
+  cost_policy:
+    type: object
+    fields:
+      budget_usd:
+        type: object
+        fields:
+          warn_at: { type: number }
+          stop_at: { type: number }
+      require_cost_estimate_before_build: { type: boolean }

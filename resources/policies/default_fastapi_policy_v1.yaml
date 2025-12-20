@@ -1,0 +1,134 @@
+policy:
+  id: default_fastapi_policy
+  version: 1
+
+# Defaults become the starting Decision Record; rules below override fields deterministically.
+defaults:
+  change_class: new_module
+  risk_level: low
+
+  requires:
+    requires_research: false
+    requires_architecture: true
+    requires_arch_lock: true
+    requires_audit: true
+    requires_repo_analysis: false
+    requires_failing_test_first: false
+    requires_integration_guide: true
+
+  gates:
+    pytest: { required: true, args: ["-q"], timeout_s: 900 }
+    ruff: { required: true, mode: "check", args: [], timeout_s: 300 }
+    mypy: { required: false, args: [], timeout_s: 600 }
+    security_scan: { required: false, tool: "pip_audit", args: [], timeout_s: 600 }
+
+  patch_limits:
+    max_files: 5
+    max_loc: 300
+    allowlist_paths: []
+    denylist_paths: []
+    require_small_patches: true
+
+  approvals:
+    dependency_addition: { required: false }
+    scope_expansion: { required: false }
+    high_risk_change: { required: false }
+
+  cost_policy:
+    budget_usd: { warn_at: 10.0, stop_at: 25.0 }
+    require_cost_estimate_before_build: false
+
+# How to classify the request (module_spec is YAML canonical)
+classify_change:
+  - when:
+      equals: { left: { ref: "module_spec.intent.kind" }, right: "new_module" }
+    set: { change_class: new_module }
+
+  - when:
+      equals: { left: { ref: "module_spec.intent.kind" }, right: "modify_endpoint" }
+    set: { change_class: modify_endpoint }
+
+# Risk scoring signals (simple additive scoring, deterministic)
+risk_signals:
+  - when:
+      not_equals: { left: { ref: "module_spec.constraints.privacy.pii" }, right: "none" }
+    add: 2
+    reason: "PII present"
+
+  - when:
+      equals: { left: { ref: "module_spec.constraints.security.auth_required" }, right: true }
+    add: 2
+    reason: "Auth involved"
+
+  - when:
+      equals: { left: { ref: "module_spec.intent.external_integrations" }, right: true }
+    add: 1
+    reason: "External integrations"
+
+  - when:
+      in:
+        left: { ref: "module_spec.intent.domain" }
+        right: ["payments", "identity", "admin"]
+    add: 3
+    reason: "High impact domain"
+
+risk_levels:
+  - when: { lte: { left: { ref: "risk_score" }, right: 1 } }
+    set: { risk_level: low }
+  - when: { lte: { left: { ref: "risk_score" }, right: 3 } }
+    set: { risk_level: medium }
+  - when: { gte: { left: { ref: "risk_score" }, right: 4 } }
+    set: { risk_level: high }
+
+rules:
+  # --- New module (FastAPI) ---
+  - when: { equals: { left: { ref: "change_class" }, right: "new_module" } }
+    set:
+      requires:
+        requires_research: true
+        requires_repo_analysis: false
+        requires_failing_test_first: false
+      patch_limits:
+        max_files: 5
+        max_loc: 300
+
+  - when:
+      and:
+        - equals: { left: { ref: "change_class" }, right: "new_module" }
+        - equals: { left: { ref: "risk_level" }, right: "high" }
+    set:
+      gates:
+        mypy: { required: true, args: [], timeout_s: 600 }
+        security_scan: { required: true, tool: "pip_audit", args: [], timeout_s: 600 }
+      patch_limits:
+        max_files: 3
+        max_loc: 150
+      approvals:
+        high_risk_change: { required: true }
+
+  # --- Modify endpoint (FastAPI) ---
+  - when: { equals: { left: { ref: "change_class" }, right: "modify_endpoint" } }
+    set:
+      requires:
+        requires_research: false
+        requires_repo_analysis: true
+        requires_failing_test_first: true
+      patch_limits:
+        max_files: 3
+        max_loc: 120
+
+  - when:
+      and:
+        - equals: { left: { ref: "change_class" }, right: "modify_endpoint" }
+        - equals: { left: { ref: "risk_level" }, right: "high" }
+    set:
+      gates:
+        mypy: { required: true, args: [], timeout_s: 600 }
+        security_scan: { required: true, tool: "pip_audit", args: [], timeout_s: 600 }
+      approvals:
+        high_risk_change: { required: true }
+
+approvals:
+  - name: dependency_addition
+    when: { equals: { left: { ref: "module_spec.dependencies.add_new_dependencies" }, right: true } }
+    require_human_approval: true

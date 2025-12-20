@@ -1,0 +1,22 @@
+profile:
+  id: python_library
+  version: 1
+
+workflow:
+  default: python_unified@1
+
+bindings:
+  tools:
+    repo_analyze: repo_analyze_library
+    generate_integration_guide: generate_integration_guide_library
+  prompts:
+    interviewer: interviewer_library_v1
+    researcher: researcher_python_v1
+    architect: architect_library_v1
+    reviewer: reviewer_library_v1
+    builder: builder_python_v1
+    qa: qa_python_v1
+
+policy:
+  default: default_python_library_policy@1
+  overrides: {}

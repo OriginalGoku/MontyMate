@@ -1,0 +1,310 @@
+workflow:
+  id: python_unified
+  version: 1
+  entry_step: interview
+
+# Canonical artifact types for this workflow family
+artifact_types:
+  run_level:
+    - module_spec          # YAML (canonical)
+    - decision_record      # JSON (canonical)
+    - repo_snapshot        # JSON/TEXT
+    - analysis_report      # MD
+    - research_report      # MD
+    - architecture_plan    # MD
+    - audit_report         # MD
+    - integration_guide    # MD
+    - prompt_bundle        # JSON
+    - run_summary          # MD
+  implementation_level:
+    - patch_diff           # DIFF (unified)
+    - patch_metadata       # JSON
+    - gate_report          # JSON
+    - gate_log             # TEXT
+
+steps:
+  interview:
+    type: agent_task
+    role: interviewer
+    outputs: [module_spec]
+    constraints:
+      no_code: true
+      max_questions_per_round: 10
+      output_format: yaml
+
+  spec_lock:
+    type: human_gate
+    inputs: [module_spec]
+    outputs: [module_spec]
+    constraints:
+      requires:
+        equals:
+          left: { ref: "module_spec.status" }
+          right: "DRAFT"
+      action: "set module_spec.status = 'LOCKED'"
+
+  classify_policy:
+    type: tool_task
+    tool: policy_engine
+    inputs: [module_spec]
+    outputs: [decision_record]
+
+  repo_snapshot:
+    type: tool_task
+    tool: capture_repo_snapshot
+    inputs: []
+    outputs: [repo_snapshot]
+
+  repo_analysis:
+    type: tool_task
+    tool: repo_analyze                 # alias resolved by profile
+    inputs: [module_spec, decision_record, repo_snapshot]
+    outputs: [analysis_report]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_repo_analysis" }
+        right: true
+
+  research:
+    type: agent_task
+    role: researcher
+    inputs: [module_spec, decision_record, analysis_report]
+    outputs: [research_report]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_research" }
+        right: true
+    constraints:
+      no_code: true
+      output_format: markdown
+
+  architecture:
+    type: agent_task
+    role: architect
+    inputs: [module_spec, decision_record, analysis_report, research_report]
+    outputs: [architecture_plan]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_architecture" }
+        right: true
+    constraints:
+      no_code: true
+      output_format: markdown
+      require_frontmatter:
+        status: "DRAFT"
+
+  arch_lock:
+    type: human_gate
+    inputs: [architecture_plan]
+    outputs: [architecture_plan]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_arch_lock" }
+        right: true
+    constraints:
+      requires:
+        equals:
+          left: { ref: "architecture_plan.frontmatter.status" }
+          right: "DRAFT"
+      action: "set architecture_plan.frontmatter.status = 'LOCKED'"
+
+  audit:
+    type: agent_task
+    role: reviewer
+    inputs: [module_spec, decision_record, analysis_report, research_report, architecture_plan]
+    outputs: [audit_report]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_audit" }
+        right: true
+    constraints:
+      no_code: true
+      output_format: markdown
+      require_frontmatter:
+        decision: "BLOCK|APPROVE"
+
+  audit_gate:
+    type: human_gate
+    inputs: [audit_report]
+    outputs: [audit_report]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_audit" }
+        right: true
+    constraints:
+      requires:
+        in:
+          left: { ref: "audit_report.frontmatter.decision" }
+          right: ["APPROVE", "BLOCK"]
+
+  failing_test_patch:
+    type: agent_task
+    role: builder
+    inputs: [module_spec, decision_record, analysis_report, audit_report, repo_snapshot]
+    outputs: [patch_diff, patch_metadata]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_failing_test_first" }
+        right: true
+    constraints:
+      patch_limits_from: decision_record.patch_limits
+      patch_kind: failing_test_only
+      output_format: unified_diff
+
+  build_patch:
+    type: agent_task
+    role: builder
+    inputs: [module_spec, decision_record, analysis_report, research_report, architecture_plan, audit_report, repo_snapshot]
+    outputs: [patch_diff, patch_metadata]
+    constraints:
+      patch_limits_from: decision_record.patch_limits
+      output_format: unified_diff
+
+  apply_patch:
+    type: tool_task
+    tool: git_apply_and_commit
+    inputs: [patch_diff, patch_metadata]
+    outputs: [patch_metadata]
+
+  verify_expected_fail:
+    type: tool_task
+    tool: run_gates
+    inputs: [decision_record, patch_metadata]
+    outputs: [gate_report, gate_log]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_failing_test_first" }
+        right: true
+    constraints:
+      expect_fail: true
+
+  verify:
+    type: tool_task
+    tool: run_gates
+    inputs: [decision_record, patch_metadata]
+    outputs: [gate_report, gate_log]
+
+  integration_guide:
+    type: tool_task
+    tool: generate_integration_guide     # alias resolved by profile
+    inputs: [module_spec, decision_record, architecture_plan, patch_metadata, gate_report]
+    outputs: [integration_guide]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_integration_guide" }
+        right: true
+
+  prompt_bundle:
+    type: tool_task
+    tool: export_prompt_bundle
+    inputs: []
+    outputs: [prompt_bundle]
+
+  run_summary:
+    type: tool_task
+    tool: generate_run_summary
+    inputs: [module_spec, decision_record, audit_report, gate_report, patch_metadata, integration_guide]
+    outputs: [run_summary]
+
+edges:
+  - from: interview
+    to: spec_lock
+
+  - from: spec_lock
+    to: classify_policy
+    guard:
+      equals:
+        left: { ref: "module_spec.status" }
+        right: "LOCKED"
+
+  - from: classify_policy
+    to: repo_snapshot
+
+  - from: repo_snapshot
+    to: repo_analysis
+
+  - from: repo_analysis
+    to: research
+
+  - from: repo_snapshot
+    to: research
+    guard:
+      equals:
+        left: { ref: "decision_record.requires.requires_repo_analysis" }
+        right: false
+
+  - from: research
+    to: architecture
+
+  - from: architecture
+    to: arch_lock
+
+  - from: arch_lock
+    to: audit
+    guard:
+      equals:
+        left: { ref: "architecture_plan.frontmatter.status" }
+        right: "LOCKED"
+
+  - from: audit
+    to: audit_gate
+
+  - from: audit_gate
+    to: architecture
+    guard:
+      equals:
+        left: { ref: "audit_report.frontmatter.decision" }
+        right: "BLOCK"
+
+  - from: audit_gate
+    to: failing_test_patch
+    guard:
+      and:
+        - equals: { left: { ref: "audit_report.frontmatter.decision" }, right: "APPROVE" }
+        - equals: { left: { ref: "decision_record.requires.requires_failing_test_first" }, right: true }
+
+  - from: failing_test_patch
+    to: apply_patch
+
+  - from: apply_patch
+    to: verify_expected_fail
+    guard:
+      equals:
+        left: { ref: "decision_record.requires.requires_failing_test_first" }
+        right: true
+
+  - from: verify_expected_fail
+    to: build_patch
+
+  - from: audit_gate
+    to: build_patch
+    guard:
+      and:
+        - equals: { left: { ref: "audit_report.frontmatter.decision" }, right: "APPROVE" }
+        - equals: { left: { ref: "decision_record.requires.requires_failing_test_first" }, right: false }
+
+  - from: build_patch
+    to: apply_patch
+
+  - from: apply_patch
+    to: verify
+
+  - from: verify
+    to: build_patch
+    guard:
+      equals:
+        left: { ref: "gate_report.passed" }
+        right: false
+
+  - from: verify
+    to: integration_guide
+    guard:
+      equals:
+        left: { ref: "gate_report.passed" }
+        right: true
+
+  - from: integration_guide
+    to: prompt_bundle
+
+  - from: prompt_bundle
+    to: run_summary

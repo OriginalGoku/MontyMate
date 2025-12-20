@@ -1,0 +1,79 @@
+# This is the “execution API catalog”: tool names, types (for pricing), and whether they run in the sandbox runtime.
+tool_registry:
+  version: 1
+
+tools:
+  policy_engine:
+    tool_type: policy
+    runs_in_runtime: false
+    costable: false
+
+  capture_repo_snapshot:
+    tool_type: repo_snapshot
+    runs_in_runtime: true
+    costable: false
+    description: "Capture repo HEAD SHA, branch, optional file list, and environment metadata."
+
+  repo_analyze_fastapi:
+    tool_type: repo_analysis
+    runs_in_runtime: true
+    costable: true
+    cost_unit: request
+    description: "Locate FastAPI entrypoints, route -> handler mapping, deps graph, blast radius."
+
+  repo_analyze_cli:
+    tool_type: repo_analysis
+    runs_in_runtime: true
+    costable: true
+    cost_unit: request
+    description: "Locate CLI entrypoints (argparse/typer/click), commands -> functions mapping."
+
+  repo_analyze_library:
+    tool_type: repo_analysis
+    runs_in_runtime: true
+    costable: true
+    cost_unit: request
+    description: "Locate public API surface, modules, exports, compatibility constraints."
+
+  git_apply_and_commit:
+    tool_type: git
+    runs_in_runtime: true
+    costable: false
+    description: "Apply unified diff to sandboxed worktree and commit with metadata."
+
+  run_gates:
+    tool_type: verification
+    runs_in_runtime: true
+    costable: true
+    cost_unit: command
+    description: "Run required gates from decision_record.gates; store gate_report + logs."
+
+  generate_integration_guide_fastapi:
+    tool_type: docs
+    runs_in_runtime: true
+    costable: false
+    description: "Generate FastAPI module integration guide (routers, deps, settings, wiring)."
+
+  generate_integration_guide_cli:
+    tool_type: docs
+    runs_in_runtime: true
+    costable: false
+    description: "Generate CLI integration/packaging guide (entrypoints, commands, install)."
+
+  generate_integration_guide_library:
+    tool_type: docs
+    runs_in_runtime: true
+    costable: false
+    description: "Generate library integration guide (API usage, versioning, packaging)."
+
+  export_prompt_bundle:
+    tool_type: export
+    runs_in_runtime: false
+    costable: false
+    description: "Export the prompts used (from SQLite) into prompt_bundle.json."
+
+  generate_run_summary:
+    tool_type: docs
+    runs_in_runtime: false
+    costable: false
+    description: "Summarize run: decisions, patches, verification results, and cost totals."

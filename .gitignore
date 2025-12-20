@@ -1,0 +1,33 @@
+# --- MontyMate (recommended to ignore run artifacts + DB) ---
+.ai_montymate/
+# If you want a narrower ignore instead of the whole folder, use:
+# .ai_montymate/montymate.db
+# .ai_montymate/runs/
+
+# --- Python caches / tooling ---
+__pycache__/
+*.py[cod]
+*.pyd
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+.mypy_cache/
+.ruff_cache/   # Ruff defaults to a .ruff_cache directory in the project root  [oai_citation:2‡Astral Docs](https://docs.astral.sh/ruff/settings/?utm_source=chatgpt.com)
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Packaging / build ---
+build/
+dist/
+*.egg-info/
+
+# --- Logs ---
+*.log
+logs/
+
+.DS_Store

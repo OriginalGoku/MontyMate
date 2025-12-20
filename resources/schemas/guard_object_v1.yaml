@@ -1,0 +1,35 @@
+guard_object_schema:
+  version: 1
+
+notes:
+  - "Guards are structured objects (no string eval)."
+  - "Guards may reference decision_record fields, artifact frontmatter fields, or tool outputs."
+
+reference:
+  ref_syntax: "dot.notation.path"
+  examples:
+    - decision_record.requires.requires_research
+    - module_spec.status
+    - audit_report.frontmatter.decision
+    - architecture_plan.frontmatter.status
+    - gate_report.passed
+
+operators:
+  equals:
+    shape: { left: "ref|literal", right: "literal|ref" }
+  not_equals:
+    shape: { left: "ref|literal", right: "literal|ref" }
+  in:
+    shape: { left: "ref|literal", right: ["literal", "..."] }
+  exists:
+    shape: { artifact_type: "string" }
+  and:
+    shape: ["guard", "guard", "..."]
+  or:
+    shape: ["guard", "guard", "..."]
+  not:
+    shape: { guard: "guard" }
+  lte:
+    shape: { left: "ref|literal", right: "literal|ref" }
+  gte:
+    shape: { left: "ref|literal", right: "literal|ref" }
