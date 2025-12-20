@@ -4,7 +4,7 @@ MontyMate is a playful sidekick for software engineers: it helps you build and m
 
 Instead of “prompt → code dump,” MontyMate runs a **spec-first, evidence-first** workflow:
 
-**Interview → Spec Lock → Policy Decision → (Optional) Repo Analysis → (Optional) Research → Design → Audit → Patch-based Build → Verification → Reports + Cost Ledger**
+**Interview → Spec Validator → Spec Lock → Policy Decision → (Optional) Repo Analysis → (Optional) Research → Design → Audit → ChangeSet Build (diffs) → Verification Gates → Reports + Provenance**
 
 If you’ve ever asked an agent for something simple (like a calculator) and gotten code immediately—with no questions, no explicit plan, and no recorded verification—MontyMate is built to do the opposite: it **slows down early** (to clarify intent) so you can **move fast later** (with confidence).
 
@@ -19,17 +19,35 @@ LLM coding is powerful, but common pain points are familiar:
 - Tests/linting are skipped or not captured as evidence.
 - You can’t answer: **what changed, why, and how much did it cost?**
 
-MontyMate is designed to work **alongside** a software engineer. It’s not a “vibes-based coder”—it’s a workflow system that enforces gates, captures decisions, and keeps everything auditable.
+MontyMate is designed to work **alongside** a software engineer. It’s not a vibes-based coder—it’s a workflow system that enforces gates, captures decisions, and keeps everything auditable.
 
 ---
 
 ## What MontyMate produces
 
-MontyMate generates both **human-readable** artifacts and a **queryable** run database.
+MontyMate generates both **human-readable artifacts** and a **queryable run database**.
 
 ### Files (human-readable artifacts)
 
+**Tracked (committed)**
+- `.montymate/provenance/`
+  - `provenance_manifest.json` — run provenance you can trust in git history (workflow/policy/profile versions + hashes, model routing snapshot, patch list, gate results summary, produced artifacts)
 
+**Untracked (gitignored)**
+- `.ai_montymate/` — run workspace + artifacts (safe to delete; reproducible from provenance + DB)
+  - `spec.yaml` (canonical) + `spec_validation_report.json`
+  - `decision_record.json` (canonical)
+  - `analysis_report.md` (optional)
+  - `research_report.md` (optional)
+  - `architecture_plan.md`
+  - `audit_report.md`
+  - `integration_guide.md`
+  - `patches/*.diff` (unified diffs)
+  - `patch_metadata.json` (includes ChangeSet state)
+  - `gates/gate_report.json` + `gates/gate_log.txt`
+  - `checkpoints/checkpoint_report.md` (ChangeSet checkpoints)
+  - `prompt_bundle.json` (export of prompts/responses used in the run)
+  - `run_summary.md`
 
 ### SQLite (machine-readable, queryable)
 
@@ -38,10 +56,16 @@ One SQLite DB per repo stores:
 - runs, steps, attempts (retries)
 - append-only event stream (timeline)
 - artifact index (paths + hashes)
-- **full prompts + full responses** (versioned)
+- prompts + responses (versioned, queryable)
 - LLM usage + **cost per call** (computed at call time)
-- tool-call usage + fees (e.g., web search)
+- tool-call usage + fees (e.g., web search / runtime commands)
 - unified cost ledger (cost per step/role/phase)
+
+**Storage policy (new):**
+MontyMate supports a `storage_policy` in the Decision Record:
+- `inline` — store payloads in SQLite
+- `artifact_ref` — store payloads as files; DB stores pointers + hashes
+- `hybrid` (default) — small payloads inline; large payloads as artifacts
 
 ---
 
@@ -50,16 +74,22 @@ One SQLite DB per repo stores:
 MontyMate splits “build software” into roles with strict contracts:
 
 - **Interviewer**: asks clarifying questions (no code) → drafts `spec.yaml`
-- **Policy Engine**: outputs `decision_record.json` (risk, gates, limits, approvals, budgets)
+- **Spec Validator (cheap/fast)**: checks completeness + contradictions → emits targeted follow-up questions  
+  - if spec fails validation: MontyMate loops back to Interview automatically (up to a limit)  
+- **Policy Engine**: outputs `decision_record.json` (risk, gates, limits, approvals, storage policy, model policy, ChangeSet policy)
 - **Repo Analyzer** (optional): maps current code → `analysis_report.md`
 - **Researcher** (optional): evaluates packages → `research_report.md`
 - **Architect**: proposes structure & interfaces → `architecture_plan.md`
 - **Reviewer**: critique-only review (no code) → `audit_report.md`
 - **Builder**: produces unified diffs only → `patches/*.diff`
-- **QA**: runs gates and records outputs → `verification/*`
+- **QA**: runs verification gates and records outputs → `gates/*`
 
-### Multi-LLM by design
-Each role can use a different model/provider. A separate **reviewer model** (or even two) is a core feature—not an afterthought.
+### Multi-LLM by design (now policy-governed)
+Each role can use a different model/provider. MontyMate adds **model governance** on top:
+
+- role SLAs (e.g., reviewer must be “high” quality on high-risk runs)
+- allowed model tags by risk level (`low|medium|high`)
+- routing with primary + fallbacks per role (`llm_routing.yaml`)
 
 ---
 
@@ -69,9 +99,18 @@ Each role can use a different model/provider. A separate **reviewer model** (or 
 MontyMate runs workflows described as a graph:
 
 - conditional branches
-- loops (audit revisions, test-fix cycles)
+- loops (spec-validation loop, audit revisions, test-fix cycles)
 - human gates (pause/resume)
 - structured guards (no string-eval)
+
+### Gate Modes (new): fewer interrupts, same control
+Not every gate must be a hard stop. MontyMate supports:
+
+- **AUTO**: recorded, non-blocking
+- **ACK**: proceeds unless someone blocks within an approval window
+- **APPROVE**: hard stop until approved
+
+Policy sets gate modes per run via `decision_record.gate_modes`.
 
 ### Decision Record (the guard driver)
 Instead of stuffing logic into workflow YAML, MontyMate uses a single canonical JSON output:
@@ -79,33 +118,60 @@ Instead of stuffing logic into workflow YAML, MontyMate uses a single canonical 
 `decision_record.json` drives:
 - change class (`new_module`, `modify_endpoint`, …)
 - risk level (`low|medium|high`)
-- required steps (repo analysis? research? failing test first?)
+- required steps (repo analysis? research? failing test first? spec validation?)
 - verification gates (pytest/ruff/mypy/security scan…)
 - patch limits (LOC/files, allow/deny paths)
 - approvals (deps, scope expansion, high-risk changes)
-- budgets (warn/stop thresholds)
+- **gate modes** (AUTO/ACK/APPROVE)
+- **workflow overrides** (deterministic step-group activation)
+- **storage policy** (inline vs artifact refs)
+- **model policy** (role SLAs + allowed tags by risk)
+- **ChangeSet policy** (multi-patch series + checkpoint cadence)
+- **provenance policy** (commit provenance manifest to repo)
 
 This keeps guards clean and workflows reusable.
 
 ---
 
-## Borrowed platform ideas (and why)
+## Deterministic dynamic expansion (new)
 
-MontyMate borrows a few battle-tested ideas from the agent ecosystem and then adds strong governance on top:
+Real work needs flexibility—but MontyMate stays reproducible.
 
-### Sandbox/runtime separation + action execution API (OpenHands-inspired)
-Actions like “run tests,” “execute commands,” and “apply patches” should happen in an isolated runtime. MontyMate follows the sandboxed runtime pattern and exposes execution via an API boundary.
+MontyMate supports **deterministic dynamic expansion** using a fixed catalog of step-groups:
 
-### Event-stream-first logging / “trajectory”
-MontyMate treats the event stream as the source of truth: every action, observation, patch, and verification run is an append-only event.
+- Policy outputs: `decision_record.workflow_overrides.add_groups: [...]`
+- Runner validates groups against `resources/workflows/step_groups_catalog_v1.yaml`
+- Workflow conditionally runs group steps (or runner injects them deterministically)
 
-### SDK boundary (Python + REST)
-MontyMate is built to be embedded:
-- Python SDK (library usage)
-- REST API (CI, remote runners, internal tooling)
+No arbitrary branching, no mystery behavior.
 
-### Conditional graphs + HITL pause/resume (LangGraph-inspired)
-Human approvals (spec lock, architecture lock, audit acceptance, dependency approvals) are first-class and resumable.
+---
+
+## ChangeSets (new): production-friendly refactors without mega-diffs
+
+Instead of forcing everything into one patch, MontyMate supports **ChangeSets**:
+
+- a series of small unified diffs
+- checkpoint reports every N patches
+- optional human checkpoint gate (mode depends on risk)
+
+This makes large refactors reviewable *and* traceable.
+
+---
+
+## Provenance Manifest (new): “who/what produced this change?”
+Every run writes `provenance_manifest.json` and commits it to:
+
+- `.montymate/provenance/`
+
+This ties code changes to:
+- workflow/policy/profile versions + hashes
+- model routing snapshot
+- verification results summary
+- patch list / commit SHAs
+- key artifacts produced
+
+Reproducibility is no longer “best effort.”
 
 ---
 
@@ -115,7 +181,7 @@ MontyMate uses **one unified workflow graph** and a **profile system** that bind
 
 - tool aliases (e.g., `repo_analyze` → `repo_analyze_fastapi`)
 - prompt templates per role (FastAPI vs CLI vs library tone/structure)
-- policy defaults/overrides (gates, limits, budgets)
+- policy defaults/overrides (gates, limits, gate modes)
 
 This keeps the workflow stable while adapting behavior per project type.
 
@@ -129,36 +195,42 @@ This keeps the workflow stable while adapting behavior per project type.
 
 | Capability | MontyMate | OpenHands | SWE-agent | Aider | LangGraph |
 |---|---:|---:|---:|---:|---:|
-| Spec-first (interview → locked spec before code) | ✅ | ◐ | ◐ | ❌ | ❌ |
+| Spec-first (interview → spec before code) | ✅ | ◐ | ◐ | ❌ | ❌ |
+| **Spec Validator loop** (cheap completeness/consistency check) | ✅ | ◐ | ◐ | ❌ | ❌ |
 | Deterministic workflow graph (YAML → guarded transitions) | ✅ | ◐ | ◐ | ❌ | ✅ |
+| **Gate modes** (AUTO / ACK / APPROVE) | ✅ | ◐ | ◐ | ◐ | ◐ |
 | Human-in-the-loop pause/resume (approval gates) | ✅ | ◐ | ◐ | ◐ | ✅ |
-| Sandbox/runtime separation + execution API | ✅ | ✅ | ◐ | ❌ | ❌ |
+| Sandbox/runtime separation + execution API | ◐ (pluggable) | ✅ | ◐ | ❌ | ❌ |
 | Event-stream-first run logging (“trajectory”) | ✅ | ✅ | ◐ | ◐ | ◐ |
-| Patch-centric (unified diffs as the unit of work) | ✅ | ◐ | ✅ | ✅ | ❌ |
+| Patch-centric (unified diffs as unit of work) | ✅ | ◐ | ✅ | ✅ | ❌ |
+| **ChangeSets** (multi-patch + checkpoints) | ✅ | ◐ | ◐ | ◐ | ❌ |
 | Verification gates as first-class outputs (logs + reports) | ✅ | ◐ | ✅ | ◐ | ❌ |
 | Multi-LLM per role (interviewer/reviewer/builder/QA) | ✅ | ◐ | ◐ | ◐ | ❌ |
-| Prompts + responses stored in DB (versioned, queryable) | ✅ | ◐ | ◐ | ◐ | ❌ |
+| Prompts + responses stored & exportable | ✅ | ◐ | ◐ | ◐ | ❌ |
 | Cost ledger (LLM + tool fees) per step/role/phase | ✅ | ◐ | ◐ | ◐ | ❌ |
+| **Provenance manifest committed to repo** | ✅ | ◐ | ◐ | ◐ | ❌ |
 
 ---
 
-## “What happens when I ask for a feature?”
+## Repo layout (shipped defaults)
 
-| Phase | MontyMate |
-|---|---|
-| Requirements | Mandatory interview → `spec.yaml` (locked) |
-| Constraints | Captured and enforced via `decision_record.json` |
-| Planning | Architecture plan + independent audit |
-| Changes | Unified diffs (validated, size-limited) |
-| Verification | Gates must run; results + logs stored |
-| Reporting | Analysis, research, audit, integration guide, run summary |
-| Accountability | SQLite event timeline + prompts/responses + cost ledger |
+MontyMate ships default resources under:
+
+- `resources/`
+  - `workflows/` (graph YAML + step-group catalog)
+  - `policies/` (policy YAML)
+  - `profiles/` (profile YAML)
+  - `tools/` (tool registry YAML)
+  - `configs/` (LLM routing + model catalog YAML)
+  - `schemas/` (Decision Record schema, etc.)
+
+When installed as a Python package, MontyMate should load these as **package resources** (not relative paths), so defaults work from wheels/zips too.
 
 ---
 
 ## Roadmap ideas
 
-- UI: timeline, diff provenance, gate results, cost dashboards
+- Timeline UI: events, diffs, gate results, cost dashboards
 - More policy packs: security fix, perf work, refactor-only invariance
 - Deeper repo intelligence: symbol-level blast radius, coverage deltas
 - Pluggable tools: scanners, benchmark runners, package analyzers
@@ -169,11 +241,12 @@ This keeps the workflow stable while adapting behavior per project type.
 ## References (project inspirations / ecosystem)
 
 - Python FAQ (name origin): https://docs.python.org/3/faq/general.html
-- OpenHands Runtime Architecture: https://docs.openhands.dev/openhands/usage/architecture/runtime
-- OpenHands paper / Action Execution API (ArXiv/OpenReview):
-  - https://arxiv.org/html/2407.16741v3
-  - https://openreview.net/pdf/95990590797cff8b93c33af989ecf4ac58bde9bb.pdf
-- LangGraph durable execution + interrupts:
-  - https://docs.langchain.com/oss/python/langgraph/durable-execution
+- OpenHands runtime architecture: https://docs.openhands.dev/usage/architecture/runtime
+- OpenHands (paper): https://openreview.net/forum?id=OJd3ayDDoF
+- LangGraph interrupts + durable execution:
   - https://docs.langchain.com/oss/python/langgraph/interrupts
-- Aider (git-centric diffs/commit workflow): https://aider.chat/
+  - https://docs.langchain.com/oss/python/langgraph/durable-execution
+- SQLite JSON1: https://sqlite.org/json1.html
+- SWE-agent: https://github.com/SWE-agent/SWE-agent
+- Aider: https://github.com/Aider-AI/aider
+- LangGraph: https://github.com/langchain-ai/langgraph

@@ -1,0 +1,48 @@
+step_groups_catalog:
+  version: 1
+
+notes:
+  - "This catalog is used for deterministic validation and documentation of allowed step-groups."
+  - "The workflow may implement groups either by conditional steps (guards) or by runner-level injection."
+  - "Runner must reject unknown groups to preserve reproducibility."
+
+groups:
+  failing_test_first:
+    id: failing_test_first
+    description: >
+      Enforce 'failing test first' behavior for modification-style changes.
+      In workflow v2, this enables the failing_test_patch stage even if requires_failing_test_first is false.
+    workflow_contract:
+      steps_involved:
+        - failing_test_patch
+        - verify_expected_fail
+      invariants:
+        - "verify_expected_fail must run with expect_fail=true"
+        - "after expected-fail verification, proceed to build_patch"
+
+  threat_model_notes:
+    id: threat_model_notes
+    description: >
+      Produce a lightweight threat model note for higher-risk contexts (auth, PII, payments/identity),
+      before patch construction.
+    workflow_contract:
+      steps_involved:
+        - threat_model_notes
+      invariants:
+        - "no code in threat_model_notes"
+
+  security_hardening:
+    id: security_hardening
+    description: >
+      Enable additional security hardening behaviors (typically paired with high-risk policies):
+      stricter gates, smaller patch limits, optional security-focused documentation.
+    workflow_contract:
+      policy_expectations:
+        - "often enables security_scan gate"
+        - "often tightens patch_limits"
+      invariants:
+        - "must not bypass audit or verification gates"
+
+catalog_integrity:
+  deterministic_only: true
+  allow_custom_groups: false

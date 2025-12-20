@@ -1,19 +1,30 @@
 policy:
   id: default_python_cli_policy
-  version: 1
+  version: 2
 
 defaults:
   change_class: new_module
   risk_level: low
 
   requires:
+    requires_spec_validation: true
     requires_research: false
     requires_architecture: true
-    requires_arch_lock: false # CLI often doesn't need formal lock; can turn on later
+    requires_arch_lock: false
     requires_audit: true
     requires_repo_analysis: false
     requires_failing_test_first: false
     requires_integration_guide: true
+    requires_provenance_manifest: true
+
+  gate_modes:
+    ack_window_minutes: 120
+    spec_lock: ACK
+    arch_lock: AUTO
+    audit_gate: ACK
+    dependency_addition: APPROVE
+    scope_expansion: APPROVE
+    high_risk_change: APPROVE
 
   gates:
     pytest: { required: true, args: ["-q"], timeout_s: 900 }
@@ -38,6 +49,48 @@ defaults:
     budget_usd: { warn_at: 8.0, stop_at: 20.0 }
     require_cost_estimate_before_build: false
 
+  workflow_overrides:
+    add_groups: []
+    skip_groups: []
+
+  storage_policy:
+    payload_mode: hybrid
+    inline_max_bytes: 32768
+    artifact_root: ".ai_montymate/"
+    retention:
+      retain_runs_days: null
+      retain_full_payloads_days: null
+      retain_gate_logs_days: null
+
+  model_policy:
+    role_slas:
+      interviewer: { min_quality_tag: "cheap" }
+      spec_validator: { min_quality_tag: "cheap" }
+      reviewer: { min_quality_tag: "standard" }
+      builder: { min_quality_tag: "standard" }
+      qa: { min_quality_tag: "cheap" }
+    allowed_model_tags_by_risk:
+      low:
+        { interviewer: ["cheap", "standard"], reviewer: ["standard", "high"] }
+      medium: { interviewer: ["standard", "high"], reviewer: ["high"] }
+      high: { interviewer: ["high"], reviewer: ["high"] }
+    spec_validator:
+      enabled: true
+      max_round_trips: 3
+      failure_behavior: return_to_interview
+
+  changeset_policy:
+    enabled: true
+    mode: changeset
+    max_patches_total: 10
+    checkpoint_every_n_patches: 2
+
+  provenance_policy:
+    enabled: true
+    commit_to_repo: true
+    commit_path: ".montymate/provenance/"
+    include_hashes: true
+
 classify_change:
   - when:
       equals: { left: { ref: "module_spec.intent.kind" }, right: "new_module" }
@@ -48,24 +101,6 @@ classify_change:
         { left: { ref: "module_spec.intent.kind" }, right: "modify_command" }
     set: { change_class: modify_command }
 
-risk_signals:
-  - when:
-      equals:
-        {
-          left: { ref: "module_spec.constraints.security.auth_required" },
-          right: true,
-        }
-    add: 2
-    reason: "Auth involved"
-
-risk_levels:
-  - when: { lte: { left: { ref: "risk_score" }, right: 1 } }
-    set: { risk_level: low }
-  - when: { lte: { left: { ref: "risk_score" }, right: 3 } }
-    set: { risk_level: medium }
-  - when: { gte: { left: { ref: "risk_score" }, right: 4 } }
-    set: { risk_level: high }
-
 rules:
   - when: { equals: { left: { ref: "change_class" }, right: "modify_command" } }
     set:
@@ -75,3 +110,7 @@ rules:
       patch_limits:
         max_files: 3
         max_loc: 120
+      workflow_overrides:
+        add_groups: ["failing_test_first"]
+      changeset_policy:
+        checkpoint_every_n_patches: 1

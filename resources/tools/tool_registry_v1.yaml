@@ -1,79 +1,153 @@
-# This is the “execution API catalog”: tool names, types (for pricing), and whether they run in the sandbox runtime.
+# resources/tools/tool_registry_v2.yaml
 tool_registry:
-  version: 1
+  version: 2
+
+# Tool registry purpose:
+# - Declare the "action execution API surface" used by the workflow runner.
+# - Mark runtime boundary (runs_in_runtime) explicitly.
+# - Mark whether tool calls are costable (for tool-fee ledger entries).
+#
+# Notes:
+# - For large payloads, prefer writing to artifact files and storing only pointers/hashes in SQLite.
+#   SQLite JSON1 can still be used to query structured metadata.  [oai_citation:1‡SQLite](https://sqlite.org/json1.html?utm_source=chatgpt.com)
+# - Human gates map naturally to pause/resume semantics (interrupt-style HITL).  [oai_citation:2‡docs.langchain.com](https://docs.langchain.com/oss/python/langgraph/interrupts?utm_source=chatgpt.com)
 
 tools:
+  # -----------------------
+  # Orchestrator-side tools
+  # -----------------------
+
   policy_engine:
     tool_type: policy
     runs_in_runtime: false
     costable: false
+    description: >
+      Evaluate policy YAML against module_spec to produce decision_record (canonical JSON).
+
+  export_prompt_bundle:
+    tool_type: export
+    runs_in_runtime: false
+    costable: false
+    description: >
+      Export prompts/responses used in this run (from SQLite) into prompt_bundle.json artifact.
+
+  generate_run_summary:
+    tool_type: docs
+    runs_in_runtime: false
+    costable: false
+    description: >
+      Create run_summary.md from decision_record, artifacts, gates, costs, and patch metadata.
+
+  changeset_start:
+    tool_type: changeset
+    runs_in_runtime: false
+    costable: false
+    description: >
+      Initialize a ChangeSet session in patch_metadata (counters, limits, checkpoint cadence).
+
+  changeset_controller:
+    tool_type: changeset
+    runs_in_runtime: false
+    costable: false
+    description: >
+      Decide whether the ChangeSet is done, whether a checkpoint is due, and update patch_metadata.
+      This keeps the workflow YAML deterministic while allowing multi-patch operation.
+
+  generate_checkpoint_report:
+    tool_type: docs
+    runs_in_runtime: false
+    costable: false
+    description: >
+      Generate a checkpoint_report.md summarizing progress so far (patch list, gates, risks, TODOs).
+
+  # -------------------
+  # Runtime-side tools
+  # -------------------
 
   capture_repo_snapshot:
     tool_type: repo_snapshot
     runs_in_runtime: true
     costable: false
-    description: "Capture repo HEAD SHA, branch, optional file list, and environment metadata."
+    description: >
+      Capture repo state (HEAD sha, branch, dirty status, optional file list) into repo_snapshot artifact.
 
   repo_analyze_fastapi:
     tool_type: repo_analysis
     runs_in_runtime: true
     costable: true
     cost_unit: request
-    description: "Locate FastAPI entrypoints, route -> handler mapping, deps graph, blast radius."
+    description: >
+      Locate FastAPI entrypoints, routers, dependencies, and route->handler mapping; produce analysis_report.md.
 
   repo_analyze_cli:
     tool_type: repo_analysis
     runs_in_runtime: true
     costable: true
     cost_unit: request
-    description: "Locate CLI entrypoints (argparse/typer/click), commands -> functions mapping."
+    description: >
+      Locate CLI entrypoints (argparse/typer/click), commands->functions mapping; produce analysis_report.md.
 
   repo_analyze_library:
     tool_type: repo_analysis
     runs_in_runtime: true
     costable: true
     cost_unit: request
-    description: "Locate public API surface, modules, exports, compatibility constraints."
+    description: >
+      Locate public API surface (exports, modules), compatibility constraints; produce analysis_report.md.
 
   git_apply_and_commit:
     tool_type: git
     runs_in_runtime: true
     costable: false
-    description: "Apply unified diff to sandboxed worktree and commit with metadata."
+    description: >
+      Apply a unified diff patch to the sandbox worktree and commit changes using patch_metadata.
 
   run_gates:
     tool_type: verification
     runs_in_runtime: true
     costable: true
     cost_unit: command
-    description: "Run required gates from decision_record.gates; store gate_report + logs."
+    description: >
+      Run verification gates from decision_record.gates (pytest/ruff/mypy/security_scan).
+      Store gate_report.json and gate_log.txt as artifacts.
 
   generate_integration_guide_fastapi:
     tool_type: docs
     runs_in_runtime: true
     costable: false
-    description: "Generate FastAPI module integration guide (routers, deps, settings, wiring)."
+    description: >
+      Generate integration_guide.md for FastAPI module wiring (routers, deps, settings, app include_router).
 
   generate_integration_guide_cli:
     tool_type: docs
     runs_in_runtime: true
     costable: false
-    description: "Generate CLI integration/packaging guide (entrypoints, commands, install)."
+    description: >
+      Generate integration_guide.md for CLI wiring (entrypoints, commands, packaging/install).
 
   generate_integration_guide_library:
     tool_type: docs
     runs_in_runtime: true
     costable: false
-    description: "Generate library integration guide (API usage, versioning, packaging)."
+    description: >
+      Generate integration_guide.md for library usage (API surface, versioning, packaging notes).
 
-  export_prompt_bundle:
-    tool_type: export
-    runs_in_runtime: false
+  write_and_commit_provenance_manifest:
+    tool_type: provenance
+    runs_in_runtime: true
     costable: false
-    description: "Export the prompts used (from SQLite) into prompt_bundle.json."
+    description: >
+      Write provenance_manifest.json and commit it into the tracked repo path (e.g. .montymate/provenance/).
+      Includes workflow/profile/policy ids+versions, hashes, model routing snapshot, gates, patch list, commit SHAs.
 
-  generate_run_summary:
-    tool_type: docs
-    runs_in_runtime: false
+  # -------------------------
+  # Optional utility helpers
+  # -------------------------
+
+  artifact_write:
+    tool_type: artifacts
+    runs_in_runtime: true
     costable: false
-    description: "Summarize run: decisions, patches, verification results, and cost totals."
+    description: >
+      Write a payload to an artifact file (used for hybrid payload storage). Store pointer/hash in DB.
+      Useful when decision_record.storage_policy.payload_mode is hybrid/artifact_ref.

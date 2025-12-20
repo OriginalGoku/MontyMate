@@ -1,221 +1,219 @@
+---
+
 ## How MontyMate loads resources
 
 At runtime, MontyMate resolves a complete “run configuration” by combining:
 
-1. **Workflow**: the graph of steps, edges, guards, and human gates  
-2. **Profile**: binds tool aliases + prompt templates + default policy  
-3. **Policy**: turns `module_spec` into `decision_record` (risk, gates, patch limits, approvals, budgets)  
-4. **LLM Routing Config**: chooses models/providers per role (interviewer/reviewer/builder/QA, etc.)  
-5. **Tool Registry**: defines what tools exist, where they execute (runtime vs orchestrator), and whether they incur tool fees  
-6. **Schemas**: validate that specs/records/guards are structurally correct
+1) **Workflow**: the graph of steps, edges, guards, gates  
+2) **Step-group catalog**: the allowlisted set of deterministic “optional groups” a policy can enable  
+3) **Profile**: binds tool aliases + prompt template IDs + default policy  
+4) **Policy**: turns `module_spec` into `decision_record` (risk, gates, gate modes, patch limits, model policy, storage policy, ChangeSets, provenance)  
+5) **LLM Routing Config**: chooses models/providers per role (with primary + fallbacks + tags)  
+6) **Tool Registry**: defines action tools, runtime boundary (orchestrator vs runtime), and costability  
+7) **Schemas**: validate spec/record/guard structures
 
 ### Resource access (installed package)
-When MontyMate is installed as a Python package, resources should be loaded via `importlib.resources` rather than relying on filesystem-relative paths. This is the recommended stdlib approach for reading “package resources.” 
+When MontyMate is installed as a Python package, **load these files using `importlib.resources`** (not filesystem-relative paths). This is the standard library mechanism designed for reading resources from packages (including wheels/zip installs).  [oai_citation:0‡Python documentation](https://docs.python.org/3/library/importlib.resources.html?utm_source=chatgpt.com)
 
 ### Shipping these YAML files
-If you ship these defaults inside the Python distribution, you must ensure they’re included as package data (setuptools supports multiple ways of including data files). 
+If you ship defaults inside the Python distribution, ensure they are included as **package data** (setuptools documents multiple supported approaches, including `pyproject.toml` configuration).  [oai_citation:1‡Setuptools](https://setuptools.pypa.io/en/latest/userguide/datafiles.html?utm_source=chatgpt.com)
+
+---
 
 ## Conventions used in this repo
 
 ### Versioning
-Every YAML resource file includes a `version` field:
+Every resource file is versioned:
 - workflows: `workflow.version`
 - policies: `policy.version`
 - profiles: `profile.version`
-- registries/configs/schemas: top-level `version`
+- registries/configs/schemas/catalogs: top-level `version`
 
-These versions allow MontyMate to support multiple installed defaults and keep backward compatibility.
+This supports backward compatibility and clean upgrades.
 
 ### IDs and selectors
-Resources are referenced using an ID + version selector convention, e.g.:
-- `python_unified@1`
-- `default_fastapi_policy@1`
-- `fastapi_service@1`
+Resources are referenced as `id@version`, for example:
+- `python_unified@2`
+- `default_fastapi_policy@2`
+- `fastapi_service@2`
 
 ### Tool aliasing
-Workflows reference tool *aliases* (e.g., `repo_analyze`) instead of hardcoding concrete implementations. Profiles bind aliases to concrete tools (e.g., `repo_analyze_fastapi`). This prevents workflow duplication across project types.
+Workflows reference tool *aliases* (e.g., `repo_analyze`) instead of hardcoding concrete tools.  
+Profiles bind aliases to concrete tools from the registry (e.g., `repo_analyze_fastapi`). This prevents workflow duplication across project types.
+
+### Deterministic dynamic expansion (step-groups)
+Policy may set:
+- `decision_record.workflow_overrides.add_groups: [...]`
+
+Runner must validate:
+- every requested group exists in `step_groups_catalog_v1.yaml`
+- optionally: group is allowed by the current profile
+
+This gives flexibility **without** turning execution into arbitrary branching.
+
+### Gate modes
+MontyMate supports gate modes to reduce “gate fatigue” while keeping engineers in control:
+- **AUTO**: recorded, non-blocking
+- **ACK**: proceeds unless blocked within an approval window
+- **APPROVE**: hard stop until human approves
+
+Gate modes are set by policy under `decision_record.gate_modes.*`.
+
+### Storage policy (DB vs artifacts)
+MontyMate supports a policy-driven storage strategy:
+- `inline`: store payloads in SQLite
+- `artifact_ref`: store payloads as files; DB stores pointers/hashes
+- `hybrid`: inline small payloads; artifact refs for larger payloads
+
+SQLite remains query-friendly for structured metadata (JSON1 is available for JSON functions).  [oai_citation:2‡SQLite](https://sqlite.org/json1.html?utm_source=chatgpt.com)
 
 ---
 
-# resources/workflows/
+# `resources/workflows/`
 
-Workflows describe the deterministic state machine (graph) that runs a job.
+Workflows define the deterministic state machine (graph) for a run.
 
-**File(s):**
-- `python_unified_v1.yaml`
+**Files**
+- `python_unified_v2.yaml` — unified workflow with:
+  - **Spec Validator** stage + loop-back to interview
+  - gate modes (AUTO/ACK/APPROVE) on spec/arch/audit + checkpoints
+  - ChangeSets (multi-patch series + checkpoints)
+  - provenance manifest generation + commit
+- `step_groups_catalog_v1.yaml` — allowlisted step-groups for deterministic expansion
 
-### What it contains
+**What workflows contain**
 - `workflow`: id, version, entry step
-- `artifact_types`: known artifact types used by the workflow
-- `steps`: each step definition (agent/tool/human gate)
-- `edges`: transitions, including guards and loops
+- `artifact_types`: known artifact types produced by the workflow
+- `steps`: agent/tool/human gate steps
+- `edges`: transitions, including loops and guarded branches
 
-### Key concepts
-- **Agent steps** are role-driven (interviewer, researcher, architect, reviewer, builder, QA).
-- **Tool steps** call named tools from the registry.
-- **Human gates** pause execution and require user input/approval to proceed.
-- **Structured guards** are used everywhere (no string-eval).
-
-### Why this matters
-Workflows are your “process contract.” The workflow graph should stay stable, while **profiles and policies** tune behavior.
+**Key concepts**
+- Agent steps are role-driven (interviewer, spec_validator, researcher, architect, reviewer, builder, qa)
+- Tool steps call named tools from the registry
+- Human gates pause/resume execution (HITL)
+- Guards are structured (no string-eval)
 
 ---
 
-# resources/policies/
+# `resources/policies/`
 
-Policies transform `module_spec` (intent + constraints) into a canonical `decision_record`.
+Policies transform `module_spec` (intent + constraints) into canonical `decision_record.json`.
 
-**Files:**
-- `default_fastapi_policy_v1.yaml`
-- `default_python_cli_policy_v1.yaml`
-- `default_python_library_policy_v1.yaml`
+**Files**
+- `default_fastapi_policy_v2.yaml`
+- `default_python_cli_policy_v2.yaml`
+- `default_python_library_policy_v2.yaml`
 
-### What a policy produces
-A `decision_record.json` containing:
-- `change_class` (`new_module`, `modify_endpoint`, etc.)
+**What a policy produces**
+`decision_record.json` contains:
+- `change_class` (`new_module`, `modify_endpoint`, …)
 - `risk_level` (`low|medium|high`)
 - `requires.*` booleans (which steps must run)
-- `gates.*` map (pytest/ruff/mypy/security scan requirements)
+- `gates.*` map (pytest/ruff/mypy/security scan…)
+- `gate_modes.*` (AUTO/ACK/APPROVE + ack window)
 - `patch_limits` (max files/LOC + allow/deny paths)
-- `approvals` (dependency/scope/high-risk approvals)
-- `cost_policy` (warn/stop thresholds, optional)
+- `workflow_overrides` (step-groups to enable)
+- `storage_policy` (inline vs artifact refs)
+- `model_policy` (role SLAs + allowed tags by risk + spec validator behavior)
+- `changeset_policy` (single patch vs ChangeSet + checkpoints)
+- `provenance_policy` (commit manifest to `.montymate/provenance/`)
 
-### Policy structure
-- `defaults`: baseline decision record fields
-- `classify_change`: maps `module_spec.intent.kind` → `change_class`
+**Policy structure**
+- `defaults`: baseline record
+- `classify_change`: `module_spec.intent.kind` → `change_class`
 - `risk_signals`: deterministic risk scoring rules
 - `risk_levels`: thresholds to map score → low/medium/high
 - `rules`: overrides based on change class + risk level
-- optional approval triggers (e.g., dependency additions require human approval)
 
-### Policy design goal
-Keep workflows generic. Put “what is required” and “how strict should we be” in policy.
+**Policy design goal**
+Keep workflows generic. Put “what is required and how strict to be” in policy.
 
 ---
 
-# resources/profiles/
+# `resources/profiles/`
 
-Profiles select “how MontyMate behaves for this kind of project” without duplicating workflows.
+Profiles select “how MontyMate behaves for this project type” without duplicating workflows.
 
-**Files:**
-- `fastapi_service_v1.yaml`
-- `python_cli_v1.yaml`
-- `python_library_v1.yaml`
+**Files**
+- `fastapi_service_v2.yaml`
+- `python_cli_v2.yaml`
+- `python_library_v2.yaml`
 
-### What a profile does
+**What a profile does**
 A profile binds:
-- **workflow**: which workflow graph to run
-- **policy**: which policy to use (and optional overrides)
-- **tool bindings**: alias → concrete tool implementation
-- **prompt template IDs**: role → prompt template name/version (stored in SQLite, referenced by ID)
+- workflow (which graph to run)
+- policy defaults (and optional overrides)
+- tool bindings (alias → concrete tool)
+- prompt template IDs per role (templates live in SQLite; profile references them)
 
-### Example bindings
-- `repo_analyze` → `repo_analyze_fastapi`
-- `generate_integration_guide` → `generate_integration_guide_cli`
-
-### Why profiles exist
-Framework differences (FastAPI vs CLI vs library) usually don’t require new workflows—just different repo analysis tools, docs generators, prompt templates, and policy defaults.
+**Why profiles exist**
+FastAPI vs CLI vs library usually doesn’t need a new workflow—just different repo analyzers, integration-guide tools, and prompt tone/structure.
 
 ---
 
-# resources/tools/
+# `resources/tools/`
 
 The tool registry is the catalog of all tools MontyMate can invoke.
 
-**File:**
-- `tool_registry_v1.yaml`
+**File**
+- `tool_registry_v2.yaml`
 
-### What it contains
-For each tool:
-- `tool_type`: used for classification + pricing lookup
-- `runs_in_runtime`: whether the tool must run inside the sandbox/runtime environment
-- `costable`: whether tool usage should be recorded in cost ledger
-- optional `cost_unit`: how pricing is measured (request/command/etc.)
-- description and metadata
+**What it contains**
+Per tool:
+- `tool_type` (for classification + pricing lookup)
+- `runs_in_runtime` (orchestrator vs runtime boundary)
+- `costable` + `cost_unit` (for cost ledger)
+- description/metadata
 
-### Runtime boundary
-A central MontyMate design is separating:
-- **orchestrator** (workflow engine, DB logging, policy evaluation)
-- **runtime/sandbox** (commands, tests, git apply, repo inspection)
-
-This file makes that boundary explicit per tool.
+**Why this matters**
+This is the “action execution API surface” for the runner. The workflow stays stable while tools evolve behind aliases.
 
 ---
 
-# resources/configs/
+# `resources/configs/`
 
 Configs are shipped defaults that aren’t “workflow” or “policy.”
 
-**File:**
-- `llm_routing_v1.yaml`
+**File**
+- `llm_routing_v2.yaml`
 
-### What it does
-Defines default model/provider selection per role:
-- interviewer / researcher / architect / reviewer / builder / QA
-- includes primary + fallback chains
+**What it does**
+Defines:
+- per-role primary + fallback models
+- a model catalog with stable tags (quality/cost/latency)
+- routing selection rules (policy enforcement + provenance recording)
 
-### Important: “routing” is not secrets
-This file should not contain API keys. Keys should come from environment variables or your secrets manager. 
+**Important**
+This file must **not** contain API keys. Keys should come from environment variables or a secret manager.
 
 ---
 
-# resources/schemas/
+# `resources/schemas/`
 
 Schemas define the contracts that keep the system deterministic and guard-friendly.
 
-**Files:**
-- `module_spec_v1.yaml`: what the interviewer must output in `spec.yaml`
-- `decision_record_v1.yaml`: structure of the decision record produced by policy
-- `guard_object_v1.yaml`: supported structured guard operators and reference syntax
+**Files**
+- `decision_record_v2.yaml` — canonical schema for the guard driver
+- `module_spec_v1.yaml` — schema for the interviewer’s `spec.yaml` output (if present in repo)
+- `guard_object_v1.yaml` — supported structured guard operators and reference syntax (if present in repo)
 
-### Why schemas matter
-Schemas let MontyMate:
-- validate step outputs (catch drift early)
-- keep guard references clean and predictable
-- prevent “mystery fields” from spreading into policies and workflows
-
----
-
-## How to extend MontyMate (common tasks)
-
-### Add a new project type (e.g., “data_pipeline”)
-1. Add a new profile: `profiles/data_pipeline_v1.yaml`
-2. Add/update a policy: `policies/default_data_pipeline_policy_v1.yaml`
-3. Add tool implementations in registry (repo analysis, integration guide)
-4. Add prompt templates in SQLite and reference IDs in the profile
-
-No new workflow needed unless the lifecycle truly differs.
-
-### Add a new gate (e.g., `bandit`)
-1. Extend the policy `defaults.gates` map to include `bandit`
-2. Ensure `run_gates` tool supports executing it and recording output
-
-### Add a new change_class
-1. Add it to the policy’s `classify_change`
-2. Add rules for requires/gates/limits
-3. Make sure module_spec schema allows intent kind if you want it validated
-
----
-
-## Packaging notes (shipping these defaults)
-
-If you intend to ship these YAML files with MontyMate:
-- include them as **package data** via your build system (setuptools supports several approaches) 
-- read them using `importlib.resources` at runtime (stdlib-supported, works across installation formats) 
+**Why schemas matter**
+Schemas prevent drift:
+- validate step outputs early
+- keep guard references predictable
+- prevent “mystery fields” from creeping into policies/workflows
 
 ---
 
 ## Override strategy (recommended)
 
-MontyMate ships these defaults, but users should be able to override without forking the repo.
+MontyMate ships these defaults, but users should be able to override without forking.
 
 Recommended precedence order:
-1. explicit CLI flags (e.g., `--profile python_cli@1`)
-2. user override folder (e.g., `~/.config/montymate/resources/...`)
-3. repo override folder (optional): `.montymate/resources/...`
-4. shipped package defaults (`resources/...`)
-
-This keeps defaults stable while supporting customization.
+1) explicit CLI flags (e.g., `--profile python_cli@2`)
+2) user override folder (e.g., `~/.config/montymate/resources/...`)
+3) repo override folder (optional): `.montymate/resources/...`
+4) shipped package defaults (`resources/...`)
 
 ---
 
@@ -226,4 +224,4 @@ Avoid putting:
 - environment endpoints that differ between dev/staging/prod
 - customer data or logs
 
-Those belong in environment configuration (or secret management), not shipped defaults.
+Keep shipped defaults clean and portable; load secrets from the environment or secret management tooling.

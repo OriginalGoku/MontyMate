@@ -1,22 +1,31 @@
 profile:
   id: fastapi_service
-  version: 1
+  version: 2
 
 workflow:
-  default: python_unified@1
+  default: python_unified@2
+
+policy:
+  default: default_fastapi_policy@2
+  overrides: {}
 
 bindings:
   tools:
+    # workflow tool aliases -> concrete tools from tool_registry_v2.yaml
     repo_analyze: repo_analyze_fastapi
     generate_integration_guide: generate_integration_guide_fastapi
+
   prompts:
     interviewer: interviewer_fastapi_v1
+    spec_validator: spec_validator_fastapi_v1
     researcher: researcher_python_v1
     architect: architect_fastapi_v1
     reviewer: reviewer_fastapi_v1
     builder: builder_python_v1
     qa: qa_python_v1
 
-policy:
-  default: default_fastapi_policy@1
-  overrides: {}
+# Optional: helps your runner validate group usage per profile (in addition to global catalog).
+allowed_step_groups:
+  - failing_test_first
+  - threat_model_notes
+  - security_hardening

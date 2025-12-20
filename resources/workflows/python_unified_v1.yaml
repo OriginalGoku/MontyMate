@@ -1,28 +1,49 @@
+# resources/workflows/python_unified_v1.yaml
 workflow:
   id: python_unified
-  version: 1
+  version: 2
   entry_step: interview
 
-# Canonical artifact types for this workflow family
+# Notes:
+# - This workflow expects decision_record v2 fields:
+#   gate_modes, workflow_overrides, storage_policy, model_policy, changeset_policy, provenance_policy.
+# - Human gates are implemented using pause/resume semantics (like interrupt-based HITL workflows).  [oai_citation:2‡LangChain Docs](https://7x.mintlify.app/oss/python/langgraph/interrupts?utm_source=chatgpt.com)
+# - Large payloads SHOULD be stored as artifacts when storage_policy.inline_max_bytes is exceeded; DB stores pointers + hashes.  [oai_citation:3‡SQLite](https://sqlite.org/json1.html?utm_source=chatgpt.com)
+
 artifact_types:
   run_level:
-    - module_spec          # YAML (canonical)
-    - decision_record      # JSON (canonical)
-    - repo_snapshot        # JSON/TEXT
-    - analysis_report      # MD
-    - research_report      # MD
-    - architecture_plan    # MD
-    - audit_report         # MD
-    - integration_guide    # MD
-    - prompt_bundle        # JSON
-    - run_summary          # MD
+    - module_spec # YAML canonical
+    - spec_validation_report # JSON (pass/fail + contradictions + targeted_questions)
+    - decision_record # JSON canonical
+    - repo_snapshot # JSON/TEXT
+    - analysis_report # MD
+    - research_report # MD
+    - architecture_plan # MD
+    - audit_report # MD
+    - threat_model_notes # MD (optional group)
+    - integration_guide # MD
+    - prompt_bundle # JSON
+    - run_summary # MD
+    - provenance_manifest # JSON (written + committed to repo)
+    - provenance_commit_metadata # JSON (commit sha, paths)
   implementation_level:
-    - patch_diff           # DIFF (unified)
-    - patch_metadata       # JSON
-    - gate_report          # JSON
-    - gate_log             # TEXT
+    - patch_diff # DIFF (unified)
+    - patch_metadata # JSON (includes changeset metadata if enabled)
+    - gate_report # JSON
+    - gate_log # TEXT
+    - checkpoint_report # MD (changeset checkpoint summary)
+
+# Deterministic dynamic expansion:
+# - Runner MUST only allow groups from this catalog.
+# - Groups are activated by decision_record.workflow_overrides.add_groups.
+step_groups_catalog:
+  - failing_test_first
+  - docs_bundle
+  - security_hardening
+  - threat_model_notes
 
 steps:
+  # 1) Interview (no code) -> drafts module_spec
   interview:
     type: agent_task
     role: interviewer
@@ -31,33 +52,80 @@ steps:
       no_code: true
       max_questions_per_round: 10
       output_format: yaml
+      # If spec_validation_report exists and failed, interviewer should focus on its targeted questions.
+      focus_from: spec_validation_report.targeted_questions
 
+  # 2) Spec Validator (cheap/fast) -> detects contradictions & missing fields
+  spec_validate:
+    type: agent_task
+    role: spec_validator
+    inputs: [module_spec]
+    outputs: [spec_validation_report]
+    run_if:
+      equals:
+        left: { ref: "decision_record.requires.requires_spec_validation" }
+        right: true
+    constraints:
+      no_code: true
+      output_format: json
+      required_fields:
+        - passed
+        - issues
+        - contradictions
+        - targeted_questions
+    defaults:
+      passed: false
+
+  # 2b) Optional human gate if spec validator says "require_human"
+  spec_validation_gate:
+    type: human_gate
+    inputs: [spec_validation_report, module_spec]
+    outputs: [spec_validation_report]
+    run_if:
+      and:
+        - equals:
+            { left: { ref: "spec_validation_report.passed" }, right: false }
+        - equals:
+            left:
+              {
+                ref: "decision_record.model_policy.spec_validator.failure_behavior",
+              }
+            right: "require_human"
+    constraints:
+      mode: APPROVE
+
+  # 3) Spec lock (gate-mode driven: AUTO/ACK/APPROVE)
   spec_lock:
     type: human_gate
-    inputs: [module_spec]
+    inputs: [module_spec, spec_validation_report]
     outputs: [module_spec]
     constraints:
+      mode_from: decision_record.gate_modes.spec_lock
+      ack_window_minutes_from: decision_record.gate_modes.ack_window_minutes
       requires:
         equals:
           left: { ref: "module_spec.status" }
           right: "DRAFT"
       action: "set module_spec.status = 'LOCKED'"
 
+  # 4) Policy classification -> decision_record
   classify_policy:
     type: tool_task
     tool: policy_engine
     inputs: [module_spec]
     outputs: [decision_record]
 
+  # 5) Snapshot
   repo_snapshot:
     type: tool_task
     tool: capture_repo_snapshot
     inputs: []
     outputs: [repo_snapshot]
 
+  # 6) Repo analysis (profile-bound tool alias)
   repo_analysis:
     type: tool_task
-    tool: repo_analyze                 # alias resolved by profile
+    tool: repo_analyze
     inputs: [module_spec, decision_record, repo_snapshot]
     outputs: [analysis_report]
     run_if:
@@ -65,6 +133,7 @@ steps:
         left: { ref: "decision_record.requires.requires_repo_analysis" }
         right: true
 
+  # 7) Research (no code)
   research:
     type: agent_task
     role: researcher
@@ -78,6 +147,7 @@ steps:
       no_code: true
       output_format: markdown
 
+  # 8) Architecture (no code)
   architecture:
     type: agent_task
     role: architect
@@ -93,6 +163,7 @@ steps:
       require_frontmatter:
         status: "DRAFT"
 
+  # 9) Architecture lock (gate-mode driven)
   arch_lock:
     type: human_gate
     inputs: [architecture_plan]
@@ -102,16 +173,26 @@ steps:
         left: { ref: "decision_record.requires.requires_arch_lock" }
         right: true
     constraints:
+      mode_from: decision_record.gate_modes.arch_lock
+      ack_window_minutes_from: decision_record.gate_modes.ack_window_minutes
       requires:
         equals:
           left: { ref: "architecture_plan.frontmatter.status" }
           right: "DRAFT"
       action: "set architecture_plan.frontmatter.status = 'LOCKED'"
 
+  # 10) Audit (no code)
   audit:
     type: agent_task
     role: reviewer
-    inputs: [module_spec, decision_record, analysis_report, research_report, architecture_plan]
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        analysis_report,
+        research_report,
+        architecture_plan,
+      ]
     outputs: [audit_report]
     run_if:
       equals:
@@ -122,7 +203,9 @@ steps:
       output_format: markdown
       require_frontmatter:
         decision: "BLOCK|APPROVE"
+        rationale: "string"
 
+  # 11) Audit gate (gate-mode driven)
   audit_gate:
     type: human_gate
     inputs: [audit_report]
@@ -132,40 +215,94 @@ steps:
         left: { ref: "decision_record.requires.requires_audit" }
         right: true
     constraints:
+      mode_from: decision_record.gate_modes.audit_gate
+      ack_window_minutes_from: decision_record.gate_modes.ack_window_minutes
       requires:
         in:
           left: { ref: "audit_report.frontmatter.decision" }
           right: ["APPROVE", "BLOCK"]
 
+  # Optional group: threat model notes (activated by workflow_overrides)
+  threat_model_notes:
+    type: agent_task
+    role: reviewer
+    inputs: [module_spec, decision_record, analysis_report, architecture_plan]
+    outputs: [threat_model_notes]
+    run_if:
+      contains:
+        value: "threat_model_notes"
+        list: { ref: "decision_record.workflow_overrides.add_groups" }
+    constraints:
+      no_code: true
+      output_format: markdown
+
+  # 12) Start ChangeSet (only if changeset mode)
+  changeset_start:
+    type: tool_task
+    tool: changeset_start
+    inputs: [decision_record]
+    outputs: [patch_metadata]
+    run_if:
+      equals:
+        left: { ref: "decision_record.changeset_policy.mode" }
+        right: "changeset"
+
+  # 13) Optional failing-test-first patch (group activation OR requires flag)
   failing_test_patch:
     type: agent_task
     role: builder
-    inputs: [module_spec, decision_record, analysis_report, audit_report, repo_snapshot]
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        analysis_report,
+        audit_report,
+        repo_snapshot,
+      ]
     outputs: [patch_diff, patch_metadata]
     run_if:
-      equals:
-        left: { ref: "decision_record.requires.requires_failing_test_first" }
-        right: true
+      or:
+        - equals:
+            left:
+              { ref: "decision_record.requires.requires_failing_test_first" }
+            right: true
+        - contains:
+            value: "failing_test_first"
+            list: { ref: "decision_record.workflow_overrides.add_groups" }
     constraints:
       patch_limits_from: decision_record.patch_limits
       patch_kind: failing_test_only
       output_format: unified_diff
 
+  # 14) Build patch (single patch or repeated within changeset)
   build_patch:
     type: agent_task
     role: builder
-    inputs: [module_spec, decision_record, analysis_report, research_report, architecture_plan, audit_report, repo_snapshot]
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        analysis_report,
+        research_report,
+        architecture_plan,
+        audit_report,
+        repo_snapshot,
+        patch_metadata,
+      ]
     outputs: [patch_diff, patch_metadata]
     constraints:
       patch_limits_from: decision_record.patch_limits
       output_format: unified_diff
+      changeset_from: decision_record.changeset_policy
 
+  # 15) Apply patch
   apply_patch:
     type: tool_task
     tool: git_apply_and_commit
     inputs: [patch_diff, patch_metadata]
     outputs: [patch_metadata]
 
+  # 16) Verify expected fail (only for failing-test-first step)
   verify_expected_fail:
     type: tool_task
     tool: run_gates
@@ -173,49 +310,198 @@ steps:
     outputs: [gate_report, gate_log]
     run_if:
       equals:
-        left: { ref: "decision_record.requires.requires_failing_test_first" }
-        right: true
+        left: { ref: "patch_metadata.patch_kind" }
+        right: "failing_test_only"
     constraints:
       expect_fail: true
 
+  # 17) Verify (normal)
   verify:
     type: tool_task
     tool: run_gates
     inputs: [decision_record, patch_metadata]
     outputs: [gate_report, gate_log]
+    run_if:
+      not:
+        guard:
+          equals:
+            {
+              left: { ref: "patch_metadata.patch_kind" },
+              right: "failing_test_only",
+            }
 
+  # 18) ChangeSet controller decides:
+  # - whether more patches are needed
+  # - whether a checkpoint is due
+  changeset_controller:
+    type: tool_task
+    tool: changeset_controller
+    inputs: [decision_record, patch_metadata, gate_report]
+    outputs: [patch_metadata]
+    run_if:
+      equals:
+        left: { ref: "decision_record.changeset_policy.mode" }
+        right: "changeset"
+
+  # 19) Checkpoint report + optional gate (every N patches, as decided by controller)
+  checkpoint_report:
+    type: tool_task
+    tool: generate_checkpoint_report
+    inputs: [module_spec, decision_record, patch_metadata, gate_report]
+    outputs: [checkpoint_report]
+    run_if:
+      equals:
+        left: { ref: "patch_metadata.changeset.checkpoint_due" }
+        right: true
+
+  checkpoint_gate:
+    type: human_gate
+    inputs: [checkpoint_report]
+    outputs: [checkpoint_report]
+    run_if:
+      equals:
+        left: { ref: "patch_metadata.changeset.checkpoint_due" }
+        right: true
+    constraints:
+      # simple rule: low risk auto; medium ack; high approve
+      mode_by_risk:
+        low: AUTO
+        medium: ACK
+        high: APPROVE
+      ack_window_minutes_from: decision_record.gate_modes.ack_window_minutes
+
+  # 20) Integration guide
   integration_guide:
     type: tool_task
-    tool: generate_integration_guide     # alias resolved by profile
-    inputs: [module_spec, decision_record, architecture_plan, patch_metadata, gate_report]
+    tool: generate_integration_guide
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        architecture_plan,
+        patch_metadata,
+        gate_report,
+      ]
     outputs: [integration_guide]
     run_if:
       equals:
         left: { ref: "decision_record.requires.requires_integration_guide" }
         right: true
 
+  # 21) Provenance manifest (write + commit to repo)
+  provenance_manifest:
+    type: tool_task
+    tool: write_and_commit_provenance_manifest
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        repo_snapshot,
+        audit_report,
+        patch_metadata,
+        gate_report,
+      ]
+    outputs: [provenance_manifest, provenance_commit_metadata]
+    run_if:
+      equals:
+        left: { ref: "decision_record.provenance_policy.enabled" }
+        right: true
+    constraints:
+      commit_to_repo_from: decision_record.provenance_policy.commit_to_repo
+      commit_path_from: decision_record.provenance_policy.commit_path
+
+  # 22) Prompt bundle export (from SQLite into artifact file)
   prompt_bundle:
     type: tool_task
     tool: export_prompt_bundle
     inputs: []
     outputs: [prompt_bundle]
 
+  # 23) Run summary
   run_summary:
     type: tool_task
     tool: generate_run_summary
-    inputs: [module_spec, decision_record, audit_report, gate_report, patch_metadata, integration_guide]
+    inputs:
+      [
+        module_spec,
+        decision_record,
+        spec_validation_report,
+        audit_report,
+        gate_report,
+        patch_metadata,
+        integration_guide,
+        provenance_commit_metadata,
+      ]
     outputs: [run_summary]
 
 edges:
+  # Interview -> Spec Validate (if enabled), else -> Spec Lock
+  - from: interview
+    to: spec_validate
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.requires.requires_spec_validation" },
+          right: true,
+        }
+
   - from: interview
     to: spec_lock
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.requires.requires_spec_validation" },
+          right: false,
+        }
 
+  # Spec Validate -> Spec Lock when passed
+  - from: spec_validate
+    to: spec_lock
+    guard:
+      equals: { left: { ref: "spec_validation_report.passed" }, right: true }
+
+  # Spec Validate -> Interview when failed and policy says return_to_interview, and within max_round_trips
+  - from: spec_validate
+    to: interview
+    guard:
+      and:
+        - equals:
+            { left: { ref: "spec_validation_report.passed" }, right: false }
+        - equals:
+            left:
+              {
+                ref: "decision_record.model_policy.spec_validator.failure_behavior",
+              }
+            right: "return_to_interview"
+        - lte:
+            left: { ref: "context.step.attempt_no" }
+            right:
+              {
+                ref: "decision_record.model_policy.spec_validator.max_round_trips",
+              }
+
+  # Spec Validate -> Human gate when require_human
+  - from: spec_validate
+    to: spec_validation_gate
+    guard:
+      and:
+        - equals:
+            { left: { ref: "spec_validation_report.passed" }, right: false }
+        - equals:
+            left:
+              {
+                ref: "decision_record.model_policy.spec_validator.failure_behavior",
+              }
+            right: "require_human"
+
+  - from: spec_validation_gate
+    to: interview
+
+  # Spec Lock -> classify_policy
   - from: spec_lock
     to: classify_policy
     guard:
-      equals:
-        left: { ref: "module_spec.status" }
-        right: "LOCKED"
+      equals: { left: { ref: "module_spec.status" }, right: "LOCKED" }
 
   - from: classify_policy
     to: repo_snapshot
@@ -230,8 +516,10 @@ edges:
     to: research
     guard:
       equals:
-        left: { ref: "decision_record.requires.requires_repo_analysis" }
-        right: false
+        {
+          left: { ref: "decision_record.requires.requires_repo_analysis" },
+          right: false,
+        }
 
   - from: research
     to: architecture
@@ -242,26 +530,108 @@ edges:
   - from: arch_lock
     to: audit
     guard:
-      equals:
-        left: { ref: "architecture_plan.frontmatter.status" }
-        right: "LOCKED"
+      or:
+        - equals:
+            {
+              left: { ref: "decision_record.requires.requires_arch_lock" },
+              right: false,
+            }
+        - equals:
+            {
+              left: { ref: "architecture_plan.frontmatter.status" },
+              right: "LOCKED",
+            }
 
   - from: audit
     to: audit_gate
 
+  # If audit blocks -> go back to architecture
   - from: audit_gate
     to: architecture
     guard:
       equals:
-        left: { ref: "audit_report.frontmatter.decision" }
-        right: "BLOCK"
+        { left: { ref: "audit_report.frontmatter.decision" }, right: "BLOCK" }
 
+  # If audit approves -> optionally threat model notes -> then patching phase
   - from: audit_gate
-    to: failing_test_patch
+    to: threat_model_notes
     guard:
       and:
-        - equals: { left: { ref: "audit_report.frontmatter.decision" }, right: "APPROVE" }
-        - equals: { left: { ref: "decision_record.requires.requires_failing_test_first" }, right: true }
+        - equals:
+            {
+              left: { ref: "audit_report.frontmatter.decision" },
+              right: "APPROVE",
+            }
+        - contains:
+            value: "threat_model_notes"
+            list: { ref: "decision_record.workflow_overrides.add_groups" }
+
+  - from: audit_gate
+    to: changeset_start
+    guard:
+      and:
+        - equals:
+            {
+              left: { ref: "audit_report.frontmatter.decision" },
+              right: "APPROVE",
+            }
+        - equals:
+            {
+              left: { ref: "decision_record.changeset_policy.mode" },
+              right: "changeset",
+            }
+
+  - from: audit_gate
+    to: build_patch
+    guard:
+      and:
+        - equals:
+            {
+              left: { ref: "audit_report.frontmatter.decision" },
+              right: "APPROVE",
+            }
+        - equals:
+            {
+              left: { ref: "decision_record.changeset_policy.mode" },
+              right: "single_patch",
+            }
+
+  - from: threat_model_notes
+    to: changeset_start
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.changeset_policy.mode" },
+          right: "changeset",
+        }
+
+  - from: threat_model_notes
+    to: build_patch
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.changeset_policy.mode" },
+          right: "single_patch",
+        }
+
+  # In changeset mode: optionally do failing-test-first, else build_patch
+  - from: changeset_start
+    to: failing_test_patch
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.requires.requires_failing_test_first" },
+          right: true,
+        }
+
+  - from: changeset_start
+    to: build_patch
+    guard:
+      equals:
+        {
+          left: { ref: "decision_record.requires.requires_failing_test_first" },
+          right: false,
+        }
 
   - from: failing_test_patch
     to: apply_patch
@@ -270,40 +640,98 @@ edges:
     to: verify_expected_fail
     guard:
       equals:
-        left: { ref: "decision_record.requires.requires_failing_test_first" }
-        right: true
+        {
+          left: { ref: "patch_metadata.patch_kind" },
+          right: "failing_test_only",
+        }
 
   - from: verify_expected_fail
     to: build_patch
 
-  - from: audit_gate
-    to: build_patch
-    guard:
-      and:
-        - equals: { left: { ref: "audit_report.frontmatter.decision" }, right: "APPROVE" }
-        - equals: { left: { ref: "decision_record.requires.requires_failing_test_first" }, right: false }
-
+  # Normal patch path
   - from: build_patch
     to: apply_patch
 
   - from: apply_patch
     to: verify
+    guard:
+      not:
+        guard:
+          equals:
+            {
+              left: { ref: "patch_metadata.patch_kind" },
+              right: "failing_test_only",
+            }
 
+  # If verify fails -> loop back to build_patch
   - from: verify
     to: build_patch
     guard:
-      equals:
-        left: { ref: "gate_report.passed" }
-        right: false
+      equals: { left: { ref: "gate_report.passed" }, right: false }
 
+  # If verify passes:
+  # - in single_patch mode: proceed to integration + provenance
   - from: verify
     to: integration_guide
     guard:
-      equals:
-        left: { ref: "gate_report.passed" }
-        right: true
+      and:
+        - equals: { left: { ref: "gate_report.passed" }, right: true }
+        - equals:
+            {
+              left: { ref: "decision_record.changeset_policy.mode" },
+              right: "single_patch",
+            }
 
+  # - in changeset mode: decide next action via controller
+  - from: verify
+    to: changeset_controller
+    guard:
+      and:
+        - equals: { left: { ref: "gate_report.passed" }, right: true }
+        - equals:
+            {
+              left: { ref: "decision_record.changeset_policy.mode" },
+              right: "changeset",
+            }
+
+  # Controller routes:
+  - from: changeset_controller
+    to: checkpoint_report
+    guard:
+      equals:
+        {
+          left: { ref: "patch_metadata.changeset.checkpoint_due" },
+          right: true,
+        }
+
+  - from: checkpoint_report
+    to: checkpoint_gate
+
+  - from: checkpoint_gate
+    to: build_patch
+
+  - from: changeset_controller
+    to: build_patch
+    guard:
+      and:
+        - equals:
+            {
+              left: { ref: "patch_metadata.changeset.checkpoint_due" },
+              right: false,
+            }
+        - equals:
+            { left: { ref: "patch_metadata.changeset.done" }, right: false }
+
+  - from: changeset_controller
+    to: integration_guide
+    guard:
+      equals: { left: { ref: "patch_metadata.changeset.done" }, right: true }
+
+  # Finish: integration -> provenance -> prompt bundle -> run summary
   - from: integration_guide
+    to: provenance_manifest
+
+  - from: provenance_manifest
     to: prompt_bundle
 
   - from: prompt_bundle

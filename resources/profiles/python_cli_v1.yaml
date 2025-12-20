@@ -1,22 +1,29 @@
 profile:
   id: python_cli
-  version: 1
+  version: 2
 
 workflow:
-  default: python_unified@1
+  default: python_unified@2
+
+policy:
+  default: default_python_cli_policy@2
+  overrides: {}
 
 bindings:
   tools:
     repo_analyze: repo_analyze_cli
     generate_integration_guide: generate_integration_guide_cli
+
   prompts:
     interviewer: interviewer_cli_v1
+    spec_validator: spec_validator_cli_v1
     researcher: researcher_python_v1
     architect: architect_cli_v1
     reviewer: reviewer_cli_v1
     builder: builder_python_v1
     qa: qa_python_v1
 
-policy:
-  default: default_python_cli_policy@1
-  overrides: {}
+allowed_step_groups:
+  - failing_test_first
+  - threat_model_notes
+  - security_hardening

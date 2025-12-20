@@ -1,13 +1,14 @@
+# resources/policies/default_fastapi_policy_v1.yaml
 policy:
   id: default_fastapi_policy
-  version: 1
+  version: 2
 
-# Defaults become the starting Decision Record; rules below override fields deterministically.
 defaults:
   change_class: new_module
   risk_level: low
 
   requires:
+    requires_spec_validation: true
     requires_research: false
     requires_architecture: true
     requires_arch_lock: true
@@ -15,12 +16,24 @@ defaults:
     requires_repo_analysis: false
     requires_failing_test_first: false
     requires_integration_guide: true
+    requires_provenance_manifest: true
+
+  # NEW: gate modes (reduce fatigue on low risk; keep hard stops on high risk).
+  gate_modes:
+    ack_window_minutes: 120
+    spec_lock: ACK
+    arch_lock: AUTO
+    audit_gate: ACK
+    dependency_addition: APPROVE
+    scope_expansion: APPROVE
+    high_risk_change: APPROVE
 
   gates:
     pytest: { required: true, args: ["-q"], timeout_s: 900 }
     ruff: { required: true, mode: "check", args: [], timeout_s: 300 }
     mypy: { required: false, args: [], timeout_s: 600 }
-    security_scan: { required: false, tool: "pip_audit", args: [], timeout_s: 600 }
+    security_scan:
+      { required: false, tool: "pip_audit", args: [], timeout_s: 600 }
 
   patch_limits:
     max_files: 5
@@ -38,30 +51,92 @@ defaults:
     budget_usd: { warn_at: 10.0, stop_at: 25.0 }
     require_cost_estimate_before_build: false
 
-# How to classify the request (module_spec is YAML canonical)
+  # NEW: deterministic dynamic expansion (step-groups; runner must enforce an allowlist catalog).
+  workflow_overrides:
+    add_groups: []
+    skip_groups: []
+
+  # NEW: metadata in SQLite; big payloads stored as artifacts and referenced.
+  storage_policy:
+    payload_mode: hybrid
+    inline_max_bytes: 32768
+    artifact_root: ".ai_montymate/"
+    retention:
+      retain_runs_days: null
+      retain_full_payloads_days: null
+      retain_gate_logs_days: null
+
+  # NEW: model governance + spec validator behavior.
+  model_policy:
+    role_slas:
+      interviewer: { min_quality_tag: "cheap" }
+      spec_validator: { min_quality_tag: "cheap" }
+      reviewer: { min_quality_tag: "standard" }
+      builder: { min_quality_tag: "standard" }
+      qa: { min_quality_tag: "cheap" }
+
+    allowed_model_tags_by_risk:
+      low:
+        interviewer: ["cheap", "standard"]
+        reviewer: ["standard", "high"]
+      medium:
+        interviewer: ["standard", "high"]
+        reviewer: ["high"]
+      high:
+        interviewer: ["high"]
+        reviewer: ["high"]
+
+    spec_validator:
+      enabled: true
+      max_round_trips: 3
+      failure_behavior: return_to_interview
+
+  # NEW: ChangeSets default (FastAPI: allow multiple patches with checkpoints).
+  changeset_policy:
+    enabled: true
+    mode: changeset
+    max_patches_total: 8
+    checkpoint_every_n_patches: 2
+
+  # NEW: provenance manifest, committed to tracked folder.
+  provenance_policy:
+    enabled: true
+    commit_to_repo: true
+    commit_path: ".montymate/provenance/"
+    include_hashes: true
+
 classify_change:
   - when:
       equals: { left: { ref: "module_spec.intent.kind" }, right: "new_module" }
     set: { change_class: new_module }
 
   - when:
-      equals: { left: { ref: "module_spec.intent.kind" }, right: "modify_endpoint" }
+      equals:
+        { left: { ref: "module_spec.intent.kind" }, right: "modify_endpoint" }
     set: { change_class: modify_endpoint }
 
-# Risk scoring signals (simple additive scoring, deterministic)
 risk_signals:
   - when:
-      not_equals: { left: { ref: "module_spec.constraints.privacy.pii" }, right: "none" }
+      not_equals:
+        { left: { ref: "module_spec.constraints.privacy.pii" }, right: "none" }
     add: 2
     reason: "PII present"
 
   - when:
-      equals: { left: { ref: "module_spec.constraints.security.auth_required" }, right: true }
+      equals:
+        {
+          left: { ref: "module_spec.constraints.security.auth_required" },
+          right: true,
+        }
     add: 2
     reason: "Auth involved"
 
   - when:
-      equals: { left: { ref: "module_spec.intent.external_integrations" }, right: true }
+      equals:
+        {
+          left: { ref: "module_spec.intent.external_integrations" },
+          right: true,
+        }
     add: 1
     reason: "External integrations"
 
@@ -81,33 +156,22 @@ risk_levels:
     set: { risk_level: high }
 
 rules:
-  # --- New module (FastAPI) ---
+  # New module: encourage research + architecture, allow modest patches.
   - when: { equals: { left: { ref: "change_class" }, right: "new_module" } }
     set:
       requires:
         requires_research: true
         requires_repo_analysis: false
         requires_failing_test_first: false
-      patch_limits:
-        max_files: 5
-        max_loc: 300
+      workflow_overrides:
+        add_groups: ["docs_bundle"]
+      changeset_policy:
+        max_patches_total: 8
+        checkpoint_every_n_patches: 2
 
+  # Modify endpoint: require repo analysis + failing test first; tighter patch limits.
   - when:
-      and:
-        - equals: { left: { ref: "change_class" }, right: "new_module" }
-        - equals: { left: { ref: "risk_level" }, right: "high" }
-    set:
-      gates:
-        mypy: { required: true, args: [], timeout_s: 600 }
-        security_scan: { required: true, tool: "pip_audit", args: [], timeout_s: 600 }
-      patch_limits:
-        max_files: 3
-        max_loc: 150
-      approvals:
-        high_risk_change: { required: true }
-
-  # --- Modify endpoint (FastAPI) ---
-  - when: { equals: { left: { ref: "change_class" }, right: "modify_endpoint" } }
+      { equals: { left: { ref: "change_class" }, right: "modify_endpoint" } }
     set:
       requires:
         requires_research: false
@@ -116,19 +180,61 @@ rules:
       patch_limits:
         max_files: 3
         max_loc: 120
+      workflow_overrides:
+        add_groups: ["failing_test_first"]
+      changeset_policy:
+        max_patches_total: 6
+        checkpoint_every_n_patches: 1
 
+  # Medium risk: tighten gates + make audit hard-approve.
   - when:
-      and:
-        - equals: { left: { ref: "change_class" }, right: "modify_endpoint" }
-        - equals: { left: { ref: "risk_level" }, right: "high" }
+      equals: { left: { ref: "risk_level" }, right: "medium" }
     set:
+      gate_modes:
+        spec_lock: ACK
+        arch_lock: ACK
+        audit_gate: APPROVE
+      changeset_policy:
+        checkpoint_every_n_patches: 1
+
+  # High risk: strongest control + extra gates + smaller patches + add security group.
+  - when:
+      equals: { left: { ref: "risk_level" }, right: "high" }
+    set:
+      gate_modes:
+        spec_lock: APPROVE
+        arch_lock: APPROVE
+        audit_gate: APPROVE
+        dependency_addition: APPROVE
+        scope_expansion: APPROVE
+        high_risk_change: APPROVE
       gates:
         mypy: { required: true, args: [], timeout_s: 600 }
-        security_scan: { required: true, tool: "pip_audit", args: [], timeout_s: 600 }
+        security_scan:
+          { required: true, tool: "pip_audit", args: [], timeout_s: 600 }
+      patch_limits:
+        max_files: 3
+        max_loc: 150
       approvals:
         high_risk_change: { required: true }
+      workflow_overrides:
+        add_groups: ["security_hardening", "threat_model_notes"]
+      model_policy:
+        role_slas:
+          interviewer: { min_quality_tag: "high" }
+          spec_validator: { min_quality_tag: "high" }
+          reviewer: { min_quality_tag: "high" }
+          builder: { min_quality_tag: "high" }
+          qa: { min_quality_tag: "standard" }
 
 approvals:
   - name: dependency_addition
-    when: { equals: { left: { ref: "module_spec.dependencies.add_new_dependencies" }, right: true } }
+    when:
+      {
+        equals:
+          {
+            left: { ref: "module_spec.dependencies.add_new_dependencies" },
+            right: true,
+          },
+      }
     require_human_approval: true

@@ -1,73 +1,199 @@
 decision_record_schema:
-  version: 1
+  version: 2
 
-required_fields:
-  - change_class
-  - risk_level
-  - requires
-  - gates
-  - patch_limits
-  - approvals
-  - cost_policy
+  required_fields:
+    - change_class
+    - risk_level
+    - requires
+    - gates
+    - gate_modes
+    - patch_limits
+    - approvals
+    - cost_policy
+    - workflow_overrides
+    - storage_policy
+    - model_policy
+    - changeset_policy
+    - provenance_policy
 
-fields:
-  change_class:
-    type: enum
-    values: ["new_module", "modify_endpoint", "modify_command", "modify_api"]
+  fields:
+    change_class:
+      type: enum
+      values: ["new_module", "modify_endpoint", "modify_command", "modify_api"]
 
-  risk_level:
-    type: enum
-    values: ["low", "medium", "high"]
+    risk_level:
+      type: enum
+      values: ["low", "medium", "high"]
 
-  requires:
-    type: object
-    required:
-      - requires_research
-      - requires_architecture
-      - requires_arch_lock
-      - requires_audit
-      - requires_repo_analysis
-      - requires_failing_test_first
-      - requires_integration_guide
-
-  gates:
-    type: map
-    keys: ["pytest", "ruff", "mypy", "security_scan"]
-    values:
+    # Drives which steps run (workflow stays generic).
+    requires:
       type: object
-      required: ["required"]
+      required:
+        - requires_spec_validation
+        - requires_research
+        - requires_architecture
+        - requires_arch_lock
+        - requires_audit
+        - requires_repo_analysis
+        - requires_failing_test_first
+        - requires_integration_guide
+        - requires_provenance_manifest
       fields:
-        required: { type: boolean }
-        args: { type: list, optional: true }
-        timeout_s: { type: integer, optional: true }
-        mode: { type: string, optional: true }
-        tool: { type: string, optional: true }
+        requires_spec_validation: { type: boolean }
+        requires_research: { type: boolean }
+        requires_architecture: { type: boolean }
+        requires_arch_lock: { type: boolean }
+        requires_audit: { type: boolean }
+        requires_repo_analysis: { type: boolean }
+        requires_failing_test_first: { type: boolean }
+        requires_integration_guide: { type: boolean }
+        requires_provenance_manifest: { type: boolean }
 
-  patch_limits:
-    type: object
-    required: ["max_files", "max_loc", "require_small_patches"]
-    fields:
-      max_files: { type: integer }
-      max_loc: { type: integer }
-      allowlist_paths: { type: list, optional: true }
-      denylist_paths: { type: list, optional: true }
-      require_small_patches: { type: boolean }
-
-  approvals:
-    type: object
-    fields:
-      dependency_addition:
-        { type: object, fields: { required: { type: boolean } } }
-      scope_expansion: { type: object, fields: { required: { type: boolean } } }
-      high_risk_change:
-        { type: object, fields: { required: { type: boolean } } }
-
-  cost_policy:
-    type: object
-    fields:
-      budget_usd:
+    # Verification gates (still a map).
+    gates:
+      type: map
+      keys: ["pytest", "ruff", "mypy", "security_scan"]
+      values:
         type: object
+        required: ["required"]
         fields:
-          warn_at: { type: number }
-          stop_at: { type: number }
-      require_cost_estimate_before_build: { type: boolean }
+          required: { type: boolean }
+          args: { type: list, optional: true }
+          timeout_s: { type: integer, optional: true }
+          mode: { type: string, optional: true }
+          tool: { type: string, optional: true }
+
+    # NEW: control human friction while keeping engineer authority.
+    # AUTO = recorded but non-blocking
+    # ACK  = proceeds unless blocked within window (asynchronous)
+    # APPROVE = hard stop until approved
+    gate_modes:
+      type: object
+      required:
+        [
+          "spec_lock",
+          "arch_lock",
+          "audit_gate",
+          "dependency_addition",
+          "scope_expansion",
+          "high_risk_change",
+        ]
+      fields:
+        spec_lock: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+        arch_lock: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+        audit_gate: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+        dependency_addition: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+        scope_expansion: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+        high_risk_change: { type: enum, values: ["AUTO", "ACK", "APPROVE"] }
+
+      optional_fields:
+        ack_window_minutes: { type: integer, optional: true, default: 120 }
+
+    patch_limits:
+      type: object
+      required: ["max_files", "max_loc", "require_small_patches"]
+      fields:
+        max_files: { type: integer }
+        max_loc: { type: integer }
+        allowlist_paths: { type: list, optional: true }
+        denylist_paths: { type: list, optional: true }
+        require_small_patches: { type: boolean }
+
+    approvals:
+      type: object
+      fields:
+        dependency_addition:
+          { type: object, fields: { required: { type: boolean } } }
+        scope_expansion:
+          { type: object, fields: { required: { type: boolean } } }
+        high_risk_change:
+          { type: object, fields: { required: { type: boolean } } }
+
+    cost_policy:
+      type: object
+      fields:
+        budget_usd:
+          type: object
+          fields:
+            warn_at: { type: number }
+            stop_at: { type: number }
+        require_cost_estimate_before_build: { type: boolean }
+
+    # NEW: deterministic dynamic expansion: add/skip from a catalog of step-groups.
+    workflow_overrides:
+      type: object
+      required: ["add_groups", "skip_groups"]
+      fields:
+        add_groups: { type: list, items: { type: string } }
+        skip_groups: { type: list, items: { type: string } }
+      notes:
+        - "Runner must only allow groups from a predefined catalog to preserve determinism."
+
+    # NEW: DB holds metadata; large payloads stored as artifact files and referenced from DB.
+    storage_policy:
+      type: object
+      required:
+        ["payload_mode", "inline_max_bytes", "artifact_root", "retention"]
+      fields:
+        payload_mode:
+          type: enum
+          values: ["inline", "artifact_ref", "hybrid"]
+        inline_max_bytes: { type: integer }
+        artifact_root: { type: string }
+        retention:
+          type: object
+          fields:
+            retain_runs_days: { type: integer, optional: true }
+            retain_full_payloads_days: { type: integer, optional: true }
+            retain_gate_logs_days: { type: integer, optional: true }
+
+    # NEW: multi-LLM governance knobs + Spec Validator.
+    model_policy:
+      type: object
+      required: ["role_slas", "allowed_model_tags_by_risk", "spec_validator"]
+      fields:
+        role_slas:
+          type: map
+          values:
+            type: object
+            fields:
+              min_quality_tag: { type: string } # e.g., "cheap|standard|high"
+              max_cost_tag: { type: string, optional: true }
+        allowed_model_tags_by_risk:
+          type: object
+          fields:
+            low: { type: map, optional: true }
+            medium: { type: map, optional: true }
+            high: { type: map, optional: true }
+        spec_validator:
+          type: object
+          required: ["enabled", "max_round_trips", "failure_behavior"]
+          fields:
+            enabled: { type: boolean }
+            max_round_trips: { type: integer }
+            failure_behavior:
+              type: enum
+              values: ["return_to_interview", "require_human", "abort"]
+
+    # NEW: ChangeSets (series of patches + checkpoints).
+    changeset_policy:
+      type: object
+      required:
+        ["enabled", "max_patches_total", "checkpoint_every_n_patches", "mode"]
+      fields:
+        enabled: { type: boolean }
+        max_patches_total: { type: integer }
+        checkpoint_every_n_patches: { type: integer }
+        mode:
+          type: enum
+          values: ["single_patch", "changeset"]
+
+    # NEW: Provenance manifest policy (and where it should be committed).
+    provenance_policy:
+      type: object
+      required: ["enabled", "commit_to_repo", "commit_path", "include_hashes"]
+      fields:
+        enabled: { type: boolean }
+        commit_to_repo: { type: boolean }
+        commit_path: { type: string } # e.g., ".montymate/provenance/"
+        include_hashes: { type: boolean }
