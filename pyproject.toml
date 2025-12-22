@@ -31,3 +31,9 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+
+[tool.pyright]
+pythonVersion = "3.11"
+venv = ".venv"
+venvPath = "."
