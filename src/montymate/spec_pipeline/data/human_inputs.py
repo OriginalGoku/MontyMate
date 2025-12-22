@@ -1,4 +1,4 @@
-# human_inpts.py
+# src/montymate/spec_pipeline/data/human_inputs.py
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -12,7 +12,7 @@ AnswerDict = dict[str, Any]
 class HumanAnswer:
     """Single answer to a targeted question.
 
-    UI simplification rule:
+    UI rule:
     - If `answer` is empty/whitespace -> treat as "decide for me".
     """
 
@@ -24,7 +24,6 @@ class HumanAnswer:
         return self.answer.strip() == ""
 
     def to_dict(self) -> AnswerDict:
-        # Persist decide_for_me too (helpful for debugging)
         return {
             "question": self.question,
             "answer": self.answer,
@@ -59,9 +58,8 @@ class HumanAnswerBatch:
         answers: list[HumanAnswer] = []
         if isinstance(raw_answers, list):
             for item in raw_answers:
-                if isinstance(item, Mapping):
-                    # cast to dict-like mapping
-                    answers.append(HumanAnswer.from_dict(item))  # type: ignore[arg-type]
+                if isinstance(item, dict):
+                    answers.append(HumanAnswer.from_dict(item))
 
         return HumanAnswerBatch(round_no=round_no, answers=answers)
 
@@ -78,9 +76,12 @@ def normalize_answers(
 
     out: list[HumanAnswer] = []
     for i, q in enumerate(questions):
+        qq = str(q).strip()
+        if not qq:
+            continue
         out.append(
             HumanAnswer(
-                question=str(q).strip(),
+                question=qq,
                 answer=str(raw_answers_by_index.get(i, "") or ""),
             )
         )

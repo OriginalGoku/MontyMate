@@ -1,27 +1,97 @@
 .
 ├── .gitignore
 ├── .python-version
+├── apps
+│   └── montymate_ui.py
+├── pyproject.toml
 ├── readme.md
-└── resources
-    ├── configs
-    │   └── llm_routing_v1.yaml
-    ├── policies
-    │   ├── default_fastapi_policy_v1.yaml
-    │   ├── default_python_cli_policy_v1.yaml
-    │   └── default_python_library_policy_v1.yaml
-    ├── profiles
-    │   ├── fastapi_service_v1.yaml
-    │   ├── python_cli_v1.yaml
-    │   └── python_library_v1.yaml
-    ├── readme.md
-    ├── schemas
-    │   ├── decision_record_v1.yaml
-    │   ├── guard_object_v1.yaml
-    │   └── module_spec_v1.yaml
-    ├── tools
-    │   └── tool_registry_v1.yaml
-    └── workflows
-        ├── python_unified_v1.yaml
-        └── step_groups_catalog_v1.yaml
+├── src
+│   └── montymate
+│       ├── __init__.py
+│       ├── app.py
+│       ├── cli
+│       │   └── main.py
+│       ├── config
+│       │   ├── models.py
+│       │   └── resolver.py
+│       ├── constants.py
+│       ├── core
+│       │   └── types.py
+│       ├── data
+│       │   ├── artifacts.py
+│       │   ├── db.py
+│       │   ├── migration.py
+│       │   ├── paths.py
+│       │   ├── repo.py
+│       │   ├── services.py
+│       │   └── types.py
+│       ├── engine
+│       │   ├── guards.py
+│       │   ├── guards_impl.py
+│       │   ├── state.py
+│       │   ├── workflow_engine.py
+│       │   └── workflow_engine_impl.py
+│       ├── events.py
+│       ├── gates
+│       │   ├── hitl.py
+│       │   └── models.py
+│       ├── llm
+│       │   ├── gateway.py
+│       │   ├── gateway_impl.py
+│       │   ├── models.py
+│       │   └── providers
+│       │       ├── http.py
+│       │       ├── ollama_chat.py
+│       │       ├── openai_chat.py
+│       │       ├── openai_compat_chat.py
+│       │       └── types.py
+│       ├── mvp
+│       │   ├── __init__.py
+│       │   ├── db.py
+│       │   ├── pipeline.py
+│       │   ├── providers.py
+│       │   └── routing.py
+│       ├── resources
+│       │   ├── configs
+│       │   │   └── llm_routing_v1.yaml
+│       │   ├── db
+│       │   │   └── migrations
+│       │   │       └── 0001_init.sql
+│       │   ├── policies
+│       │   │   ├── default_fastapi_policy_v1.yaml
+│       │   │   ├── default_python_cli_policy_v1.yaml
+│       │   │   └── default_python_library_policy_v1.yaml
+│       │   ├── profiles
+│       │   │   ├── fastapi_service_v1.yaml
+│       │   │   ├── python_cli_v1.yaml
+│       │   │   └── python_library_v1.yaml
+│       │   ├── readme.md
+│       │   ├── schemas
+│       │   │   ├── decision_record_v1.yaml
+│       │   │   ├── guard_object_v1.yaml
+│       │   │   └── module_spec_v1.yaml
+│       │   ├── tools
+│       │   │   └── tool_registry_v1.yaml
+│       │   └── workflows
+│       │       ├── python_unified_v1.yaml
+│       │       └── step_groups_catalog_v1.yaml
+│       ├── spec_pipeline
+│       │   ├── __init__.py
+│       │   ├── data
+│       │   │   ├── __init__.py
+│       │   │   ├── constants.py
+│       │   │   ├── human_inputs.py
+│       │   │   ├── spec_store.py
+│       │   │   ├── spec_types.py
+│       │   │   └── tool_types.py
+│       │   ├── readme.md
+│       │   └── tools
+│       │       └── base.py
+│       ├── tools
+│       │   ├── executor.py
+│       │   ├── models.py
+│       │   └── simple_executor.py
+│       └── validators.py
+└── structure.txt
 
-8 directories, 17 files
+26 directories, 69 files

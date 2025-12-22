@@ -1,6 +1,7 @@
 # --- MontyMate (recommended to ignore run artifacts + DB) ---
 .ai_module_factory/
 
+
 # --- SQLite (if any appear outside .ai_module_factory) ---
 *.db
 *.sqlite
@@ -28,6 +29,8 @@ htmlcov/
 .venv/
 venv/
 env/
+
+.env
 
 # --- Packaging / build ---
 build/
