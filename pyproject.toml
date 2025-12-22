@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+# setuptools build backend is the standard path here.  [oai_citation:3‡Setuptools](https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html?utm_source=chatgpt.com)
+
+[project]
+name = "montymate"
+version = "0.1.0"
+description = "MontyMate: a spec-first, evidence-first LLM sidekick for software engineers."
+readme = "readme.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0",
+]
+# PEP 621 defines core metadata under [project].  [oai_citation:4‡Python Enhancement Proposals (PEPs)](https://peps.python.org/pep-0621/?utm_source=chatgpt.com)
+
+[project.optional-dependencies]
+ui = [
+  "streamlit>=1.30",
+]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.10",
+]
+# Optional dependencies ("extras") are the recommended pattern.  [oai_citation:5‡Python Packaging](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/?utm_source=chatgpt.com)
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]

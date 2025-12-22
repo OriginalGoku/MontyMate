@@ -1,0 +1,57 @@
+# This is a contract for what the interviewer must produce in modeule_spec.yaml (YAML canonical). 
+# It’s not a JSON Schema—just a clear YAML spec for your system.
+# resources/schemas/module_spec_v1.yaml
+version: 1
+
+# JSON Schema expressed in YAML.
+# Used to validate module_spec.yaml produced/edited during interview rounds.
+schema:
+  $schema: "https://json-schema.org/draft/2020-12/schema"
+  title: "MontyMate module_spec"
+  type: object
+  additionalProperties: false
+  required:
+    - status
+    - goal
+    - functional_requirements
+    - constraints
+    - security_concerns
+    - assumptions
+    - other_notes
+
+  properties:
+    status:
+      type: string
+      enum: ["DRAFT", "LOCKED"]
+
+    goal:
+      type: string
+      minLength: 1
+
+    functional_requirements:
+      type: array
+      description: "Concrete behaviors the module must provide."
+      items:
+        type: string
+        minLength: 1
+
+    constraints:
+      type: array
+      description: "Non-functional constraints (performance, compatibility, privacy, etc.)."
+      items:
+        type: string
+
+    security_concerns:
+      type: array
+      description: "Security/privacy constraints or concerns to explicitly account for."
+      items:
+        type: string
+
+    assumptions:
+      type: array
+      description: "Assumptions that shape the design; should be validated or made explicit."
+      items:
+        type: string
+
+    other_notes:
+      type: string

@@ -1,0 +1,27 @@
+.
+├── .gitignore
+├── .python-version
+├── readme.md
+└── resources
+    ├── configs
+    │   └── llm_routing_v1.yaml
+    ├── policies
+    │   ├── default_fastapi_policy_v1.yaml
+    │   ├── default_python_cli_policy_v1.yaml
+    │   └── default_python_library_policy_v1.yaml
+    ├── profiles
+    │   ├── fastapi_service_v1.yaml
+    │   ├── python_cli_v1.yaml
+    │   └── python_library_v1.yaml
+    ├── readme.md
+    ├── schemas
+    │   ├── decision_record_v1.yaml
+    │   ├── guard_object_v1.yaml
+    │   └── module_spec_v1.yaml
+    ├── tools
+    │   └── tool_registry_v1.yaml
+    └── workflows
+        ├── python_unified_v1.yaml
+        └── step_groups_catalog_v1.yaml
+
+8 directories, 17 files

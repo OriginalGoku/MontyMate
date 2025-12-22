@@ -1,0 +1,68 @@
+llm_routing:
+  version: 1
+
+  providers:
+    lmstudio:
+      kind: openai_compat_chat
+      base_url: "http://localhost:1234/v1"
+      api_key_env: null
+
+    ollama:
+      kind: ollama_chat
+      base_url: "http://localhost:11434"
+      api_key_env: null
+
+    openai:
+      kind: openai_chat
+      base_url: "https://api.openai.com/v1"
+      api_key_env: "OPENAI_API_KEY"
+
+  roles:
+    interviewer:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: openai
+          model: "gpt-5-nano"
+    spec_polisher:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+    spec_improver:
+        chain:
+          - provider: ollama
+            model: "nemotron-3-nano:30b"
+    spec_validator:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: openai
+          model: "gpt-5-nano"
+
+    architect:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: openai
+          model: "gpt-5-nano"
+
+    reviewer:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: openai
+          model: "gpt-5-nano"
+
+    builder:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: lmstudio
+          model: "your-lmstudio-model-id"
+
+    qa:
+      chain:
+        - provider: ollama
+          model: "nemotron-3-nano:30b"
+        - provider: openai
+          model: "gpt-5-nano"

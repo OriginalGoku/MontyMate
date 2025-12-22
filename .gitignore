@@ -1,8 +1,16 @@
 # --- MontyMate (recommended to ignore run artifacts + DB) ---
-.ai_montymate/
-# If you want a narrower ignore instead of the whole folder, use:
-# .ai_montymate/montymate.db
-# .ai_montymate/runs/
+.ai_module_factory/
+
+# --- SQLite (if any appear outside .ai_module_factory) ---
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
 
 # --- Python caches / tooling ---
 __pycache__/
@@ -30,4 +38,8 @@ dist/
 *.log
 logs/
 
+
+# --- OS / editor ---
 .DS_Store
+.vscode/
+.idea/
