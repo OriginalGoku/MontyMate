@@ -1,59 +1,47 @@
-# src/montymate/spec_pipeline/data/tool_types.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+
+JsonDict = dict[str, object]
 
 
-JsonDict = dict[str, Any]
+# src/montymate/spec_pipeline/data/tool_types.py
 
 
-@dataclass(frozen=True, slots=True)
-class TargetedQuestion:
-    text: str
-
-    def to_dict(self) -> JsonDict:
-        return {"text": self.text}
-
-    @staticmethod
-    def from_dict(d: dict[str, Any]) -> "TargetedQuestion":
-        return TargetedQuestion(text=str(d.get("text") or "").strip())
+def _as_str_list(x: object) -> list[str]:
+    """Converts a JSON value into list[str] with basic cleanup."""
+    if not isinstance(x, list):
+        return []
+    out: list[str] = []
+    for item in x:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+    return out
 
 
 @dataclass(frozen=True, slots=True)
 class SpecCriticReport:
+    """Structured output produced by SpecCriticTool."""
     passed: bool
     issues: list[str]
-    targeted_questions: list[TargetedQuestion]
+    targeted_questions: list[str]
 
     def to_dict(self) -> JsonDict:
         return {
             "passed": bool(self.passed),
             "issues": list(self.issues),
-            "targeted_questions": [q.to_dict() for q in self.targeted_questions],
+            "targeted_questions": list(self.targeted_questions),
         }
 
     @staticmethod
-    def from_dict(d: dict[str, Any]) -> "SpecCriticReport":
-        issues_raw = d.get("issues")
-        tq_raw = d.get("targeted_questions")
-
-        issues: list[str] = []
-        if isinstance(issues_raw, list):
-            issues = [str(x).strip() for x in issues_raw if str(x).strip()]
-
-        targeted_questions: list[TargetedQuestion] = []
-        if isinstance(tq_raw, list):
-            for item in tq_raw:
-                if isinstance(item, dict):
-                    q = TargetedQuestion.from_dict(item)
-                    if q.text:
-                        targeted_questions.append(q)
-                elif isinstance(item, str) and item.strip():
-                    targeted_questions.append(TargetedQuestion(text=item.strip()))
+    def from_dict(d: dict[str, object]) -> "SpecCriticReport":
+        passed_raw = d.get("passed")
+        passed = bool(passed_raw) if isinstance(passed_raw, (bool, int)) else False
 
         return SpecCriticReport(
-            passed=bool(d.get("passed", False)),
-            issues=issues,
-            targeted_questions=targeted_questions,
+            passed=passed,
+            issues=_as_str_list(d.get("issues")),
+            targeted_questions=_as_str_list(d.get("targeted_questions")),
         )

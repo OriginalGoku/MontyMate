@@ -80,12 +80,23 @@
 │       │   ├── data
 │       │   │   ├── __init__.py
 │       │   │   ├── constants.py
+│       │   │   ├── context.py
 │       │   │   ├── human_inputs.py
 │       │   │   ├── spec_store.py
 │       │   │   ├── spec_types.py
 │       │   │   └── tool_types.py
+│       │   ├── llm
+│       │   │   ├── __init__.py
+│       │   │   ├── llm_client.py
+│       │   │   ├── prompts
+│       │   │   │   └── __init__.py
+│       │   │   └── providers
+│       │   │       ├── __init__.py
+│       │   │       ├── ollama_client.py
+│       │   │       └── openai_client.py
 │       │   ├── readme.md
 │       │   └── tools
+│       │       ├── __init__.py
 │       │       └── base.py
 │       ├── tools
 │       │   ├── executor.py
@@ -94,4 +105,4 @@
 │       └── validators.py
 └── structure.txt
 
-26 directories, 69 files
+29 directories, 77 files

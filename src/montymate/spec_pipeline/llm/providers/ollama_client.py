@@ -80,13 +80,23 @@ class OllamaClient:
             raise RuntimeError(f"Ollama HTTPError {getattr(e, 'code', None)}: {body}") from e
         except urllib.error.URLError as e:
             raise RuntimeError(f"Ollama URLError: {e}") from e
-
+        
+        if raw.get("error"):
+            raise RuntimeError(f"Ollama error: {raw['error']}")
+        
+        
         # Ollama returns {"message": {"role": "...", "content": "..."}, ...}
         text = ""
         msg = raw.get("message")
+        
         if isinstance(msg, dict):
-            text = str(msg.get("content") or "")
-
+            content = msg.get("content")
+            text = content.strip() if isinstance(content, str) else ""
+        
+        if not text:
+            print(f"ollama_client.py raw output -> {raw}")
+            raise RuntimeError(f"Ollama error: No content in response")
+            
         # Ollama sometimes returns eval_count / prompt_eval_count instead of OpenAI usage
         input_tokens = raw.get("prompt_eval_count")
         output_tokens = raw.get("eval_count")

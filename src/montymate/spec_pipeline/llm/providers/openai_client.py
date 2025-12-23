@@ -8,16 +8,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from streamlit import form
-
 from ..llm_client import ChatMessages, LLMConfig, LLMResult
-
 
 JsonDict = dict[str, Any]
 
 
 def _post_json(*, url: str, headers: dict[str, str], payload: JsonDict, timeout_s: float = 60.0) -> JsonDict:
-    """Sends a JSON POST request and returns a parsed JSON object."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
@@ -28,23 +24,11 @@ def _post_json(*, url: str, headers: dict[str, str], payload: JsonDict, timeout_
 
 @dataclass(slots=True)
 class OpenAIClient:
-    """Calls the OpenAI Chat Completions endpoint.
-
-    This client keeps provider configuration on the instance (LLMConfig).
-    Provider-specific settings are read from config.extra.
-
-    Supported config.extra keys (optional):
-    - base_url: str (default: https://api.openai.com)
-    - api_key_env: str (default: OPENAI_API_KEY)
-    - timeout_s: float (default: 60.0)
-    - request: dict (merged into request payload)
-    """
-
     config: LLMConfig
 
     def chat(self, *, messages: ChatMessages) -> LLMResult:
         base_url = str(self.config.extra.get("base_url") or "https://api.openai.com").rstrip("/")
-        api_key_env = str(self.config.extra.get("api_key_env"))
+        api_key_env = str(self.config.extra.get("api_key_env") or "OPENAI_API_KEY")
         timeout_s = float(self.config.extra.get("timeout_s") or 60.0)
 
         api_key = os.getenv(api_key_env, "")
@@ -57,10 +41,7 @@ class OpenAIClient:
             "Content-Type": "application/json",
         }
 
-        payload: JsonDict = {
-            "model": self.config.model,
-            "messages": list(messages),
-        }
+        payload: JsonDict = {"model": self.config.model, "messages": list(messages)}
         if self.config.temperature is not None:
             payload["temperature"] = float(self.config.temperature)
         if self.config.max_tokens is not None:
@@ -102,22 +83,14 @@ class OpenAIClient:
             total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
             raw=raw,
         )
-        
+
 
 def main() -> None:
-    """Runs a minimal smoke test against OpenAI and prints the returned text."""
     from dotenv import load_dotenv
 
-    _ = load_dotenv()
+    load_dotenv()
 
-    import os
-    import sys
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    print("Starting")
-    # This check keeps the failure message friendly.
-    if not (openai_key or "").strip():
-        print("OPENAI_API_KEY environment variable is required.", file=sys.stderr)
-        raise SystemExit(2)
+    print("Starting", flush=True)
 
     model = (os.environ.get("OPENAI_MODEL") or "gpt-4o-mini").strip()
 
@@ -125,14 +98,10 @@ def main() -> None:
         config=LLMConfig(
             provider="openai",
             model=model,
-            max_tokens=None,
-            temperature=None,
+            max_tokens=64,
+            temperature=0.2,
             extra={
-                # This client reads the key from the environment.
-                "api_key_env": openai_key,
-                # Optional overrides:
-                # "base_url": "https://api.openai.com",
-                # "timeout_s": 60.0,
+                "api_key_env": "OPENAI_API_KEY",
             },
         )
     )
@@ -144,6 +113,8 @@ def main() -> None:
         ]
     )
 
-    print(f'Here are the result.text: {result.text}')
+    print(f"Here is result.text: {result.text!r}", flush=True)
 
-    
+
+if __name__ == "__main__":
+    main()

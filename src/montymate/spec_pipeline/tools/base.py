@@ -1,63 +1,61 @@
 # src/montymate/spec_pipeline/tools/base.py
+
 from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
 
-
-class ToolError(RuntimeError):
-    def __init__(self, message: str, data: dict[str, Any] | None = None):
-        super().__init__(message)
-        self.message = message
-        self.data = data
-
-    def __str__(self) -> str:
-        return self.message
+from ..errors import ToolError
+from ..llm.llm_client import LLMClient
+from ..utils.input_guards import require as _require
+from ..utils.input_guards import require_non_empty as _require_non_empty
 
 
 class BaseTool(ABC):
-    """
-    Base class for all spec-pipeline tools.
+    """Defines the common execution contract for spec-pipeline tools.
 
-    Common behaviors:
-    - Stable identity: name/version/tags
-    - Single entrypoint: __call__ wraps run() with timing + consistent ToolError
-    - Shared input guards: require(), require_non_empty()
+    The base class provides:
+    - stable identity (name/version/tags)
+    - a single entrypoint (__call__) that wraps run() with timing and consistent errors
+    - convenience wrappers for input guards
+
+    The LLM client is passed explicitly to keep tool execution deterministic and easy
+    to test. Tools may still support per-call override and/or a default client at the
+    concrete tool level.
     """
 
-    # Override in subclasses
     name: str = "base_tool"
     version: str = "0.1.0"
     tags: tuple[str, ...] = ()
 
     @abstractmethod
-    def run(self, *, inputs: dict[str, Any], ctx: Any) -> dict[str, Any]:
-        """
-        Tool implementation.
-
-        - inputs: plain dict payload
-        - ctx: context object (at minimum should include run_id + step)
-        - returns: plain dict output
-        """
+    def run(
+        self,
+        *,
+        inputs: dict[str, object],
+        ctx: object,
+        llm: LLMClient | None = None,
+    ) -> dict[str, object]:
+        """Runs the tool implementation."""
         raise NotImplementedError
 
-    def __call__(self, *, inputs: dict[str, Any], ctx: Any) -> dict[str, Any]:
-        """
-        Safe wrapper around run():
-        - adds timing metadata
-        - normalizes unexpected exceptions into ToolError
-        """
+    def __call__(
+        self,
+        *,
+        inputs: dict[str, object],
+        ctx: object,
+        llm: LLMClient | None = None,
+    ) -> dict[str, object]:
+        """Executes the tool with consistent timing and error handling."""
         t0 = time.perf_counter()
         try:
-            out = self.run(inputs=inputs, ctx=ctx)
+            out = self.run(inputs=inputs, ctx=ctx, llm=llm)
             if not isinstance(out, dict):
                 raise ToolError(
-                    f"{self.name} Tool returned non-dict output",
+                    f"{self.name} returned non-dict output",
                     data={"tool": self.name, "type": str(type(out))},
                 )
+
             return {
                 **out,
                 "_meta": {
@@ -76,51 +74,19 @@ class BaseTool(ABC):
                 "Tool crashed",
                 data={
                     "tool": self.name,
-                    "error": str(e),
+                    "error": f"{type(e).__name__}: {e}",
                     "run_id": getattr(ctx, "run_id", None),
                     "step": getattr(ctx, "step", None),
                 },
             ) from e
 
     # --------------------
-    # Input guards
+    # Guard wrappers - removable once the code stabilizes
     # --------------------
     @staticmethod
-    def require(inputs: Mapping[str, Any], *keys: str) -> None:
-        missing = [k for k in keys if k not in inputs]
-        if missing:
-            raise ToolError("Missing required inputs", data={"missing": missing})
+    def require(inputs: dict[str, object], *keys: str) -> None:
+        _require(inputs, *keys)
 
     @staticmethod
-    def require_non_empty(inputs: Mapping[str, Any], *keys: str) -> None:
-        """
-        Requires keys exist AND their values are not empty.
-
-        Empty rules:
-        - None -> empty
-        - str -> empty if strip() == ""
-        - list/tuple/set/dict -> empty if len == 0
-        - everything else -> empty if falsy
-        """
-        BaseTool.require(inputs, *keys)
-
-        empty: list[str] = []
-        for k in keys:
-            v = inputs.get(k)
-
-            if v is None:
-                empty.append(k)
-                continue
-
-            if isinstance(v, str):
-                if v.strip() == "":
-                    empty.append(k)
-                continue
-
-            if isinstance(v, (list, tuple, set, dict)):
-                if len(v) == 0:
-                    empty.append(k)
-                continue
-
-        if empty:
-            raise ToolError("Required inputs must be non-empty", data={"empty": empty})
+    def require_non_empty(inputs: dict[str, object], *keys: str) -> None:
+        _require_non_empty(inputs, *keys)

@@ -1,15 +1,14 @@
-#spec_types.py
+# spec_types.py
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping as AbcMapping
+from dataclasses import dataclass, field, fields
 from enum import Enum
-from typing import Any
-from collections.abc import Mapping
+
 
 class SpecStatus(str, Enum):
     DRAFT = "DRAFT"
     LOCKED = "LOCKED"
-    # Add more later if needed (e.g. VALIDATED, NEEDS_WORK, etc.)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,14 +21,19 @@ class Spec:
     assumptions: list[str] = field(default_factory=list)
     other_notes: str = ""
 
-    @staticmethod
-    def from_dict(d: Mapping[str, Any] |None) -> "Spec":
-        d = dict(d or {})
+    @classmethod
+    def keys(cls) -> tuple[str, ...]:
+        """Returns the canonical Spec field names derived from the dataclass definition."""
+        return tuple(f.name for f in fields(cls))
 
-        def as_str(x: Any) -> str:
+    @staticmethod
+    def from_dict(d: Mapping[str, object] | None) -> "Spec":
+        d2: dict[str, object] = dict(d or {})
+
+        def as_str(x: object) -> str:
             return x.strip() if isinstance(x, str) else ""
 
-        def as_list(x: Any) -> list[str]:
+        def as_list(x: object) -> list[str]:
             if not isinstance(x, list):
                 return []
             out: list[str] = []
@@ -40,25 +44,39 @@ class Spec:
                 if s:
                     out.append(s)
             return out
-            
-        raw_status = d.get("status", SpecStatus.DRAFT.value)
+
+        def as_other_notes(x: object) -> str:
+            # Accepts either a string or a list/tuple of strings and normalizes to a single string.
+            if isinstance(x, str):
+                return x.strip()
+            if isinstance(x, (list, tuple)):
+                lines: list[str] = []
+                for item in x:
+                    if item is None:
+                        continue
+                    s = str(item).strip()
+                    if s:
+                        lines.append(s)
+                return "\n".join(lines).strip()
+            return ""
+
+        raw_status = d2.get("status", SpecStatus.DRAFT.value)
         try:
-            status = raw_status if isinstance(raw_status, SpecStatus) else SpecStatus(str(raw_status))
+            status = raw_status if isinstance(raw_status, SpecStatus) else SpecStatus(str(raw_status).upper())
         except Exception:
             status = SpecStatus.DRAFT
-        
 
         return Spec(
             status=status,
-            goal=as_str(d.get("goal")),
-            functional_requirements=as_list(d.get("functional_requirements")),
-            constraints=as_list(d.get("constraints")),
-            security_concerns=as_list(d.get("security_concerns")),
-            assumptions=as_list(d.get("assumptions")),
-            other_notes=as_str(d.get("other_notes")),
+            goal=as_str(d2.get("goal")),
+            functional_requirements=as_list(d2.get("functional_requirements")),
+            constraints=as_list(d2.get("constraints")),
+            security_concerns=as_list(d2.get("security_concerns")),
+            assumptions=as_list(d2.get("assumptions")),
+            other_notes=as_other_notes(d2.get("other_notes")),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "status": self.status.value,
             "goal": self.goal,

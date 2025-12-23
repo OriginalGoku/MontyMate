@@ -5,7 +5,7 @@ persistence adapters (e.g., file-backed SpecStore) so components can be unit-tes
 without involving the DB/UI.
 """
 
-from .spec_types import Spec, SpecDict, SPEC_KEYS
+from .spec_types import Spec
 from .human_inputs import HumanAnswer, HumanAnswerBatch, normalize_answers
 from .spec_store import SpecStore, SpecStorePaths, FileSpecStore, MemorySpecStore
 
