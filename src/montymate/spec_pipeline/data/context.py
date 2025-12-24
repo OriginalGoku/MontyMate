@@ -1,9 +1,11 @@
 # src/montymate/spec_pipeline/data/context.py
+# src/montymate/spec_pipeline/data/context.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,32 +13,24 @@ class ToolContext:
     """
     Context object passed to every tool call.
 
-    What it does (and why it exists):
-    - Carries *run-level identity* (`run_id`) so every tool can tag its outputs
-      (logs, persisted files, error reports) with the run being processed.
-    - Carries the *current pipeline step* (`step`) so tool outputs can include
-      where they were produced (e.g. "compose", "critic", "refine", "edit").
-      This makes debugging much easier because you can correlate artifacts and
-      failures to the exact stage that produced them.
-    - Carries `project_root` so tools (or helpers) can resolve filesystem paths
-      consistently if needed. Most tools shouldn't write files directly, but
-      having the root available is useful for diagnostics or future expansion.
+    What it does:
+    - Carries run identity (`run_id`) so tool outputs and errors can be tagged to a single run.
+    - Carries pipeline position (`step`) so artifacts and failures can be attributed to the stage that produced them.
+    - Carries `project_root` so paths can be resolved consistently for diagnostics and future expansion.
 
     Design rule:
-    - Tools should treat ctx as read-only. If you need a new step, create a new
-      context via `with_step(...)` rather than mutating anything.
+    - The context is treated as read-only. Step transitions are represented by creating a new context via `with_step(...)`.
     """
 
     project_root: Path
     run_id: str
     step: str
 
-    # Optional free-form metadata for debugging or experiments.
-    # Keep this small and only use when needed.
-    meta: dict[str, Any] | None = None
+    # Optional
+    meta: dict[str, JsonValue] | None = None
 
     def with_step(self, step: str) -> "ToolContext":
-        """Return a new context for the same run but a different step."""
+        """Returns a new context for the same run with an updated step label."""
         return ToolContext(
             project_root=self.project_root,
             run_id=self.run_id,
