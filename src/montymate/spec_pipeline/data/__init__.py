@@ -6,7 +6,7 @@ without involving the DB/UI.
 """
 
 from .spec_types import Spec
-from .human_inputs import HumanAnswer, HumanAnswerBatch, normalize_answers
+from .human_inputs import QuestionAnswer, ClarificationBatch, normalize_answers
 from .spec_store import SpecStore, SpecStorePaths, FileSpecStore, MemorySpecStore
 
 __all__ = [

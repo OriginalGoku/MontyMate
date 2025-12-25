@@ -3,86 +3,127 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
 
-AnswerDict = dict[str, Any]
+
+AnswerDict = dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
-class HumanAnswer:
-    """Single answer to a targeted question.
+class QuestionAnswer:
+    """Represents one answer to a targeted question.
 
-    UI rule:
-    - If `answer` is empty/whitespace -> treat as "decide for me".
+    The instance stores provenance explicitly:
+    - decide_for_me indicates that the user delegated the decision.
+    - is_llm_generated indicates that the final answer text was produced by an LLM.
+
+    The parsing behavior remains tolerant:
+    - If decide_for_me is missing, it is inferred from a blank answer.
+    - If is_llm_generated is missing, it defaults to False.
     """
 
     question: str
     answer: str = ""
-
-    @property
-    def decide_for_me(self) -> bool:
-        return self.answer.strip() == ""
+    decide_for_me: bool = False
+    is_llm_generated: bool = False
 
     def to_dict(self) -> AnswerDict:
+        """Converts the answer into a JSON-serializable mapping."""
         return {
             "question": self.question,
             "answer": self.answer,
-            "decide_for_me": self.decide_for_me,
+            "decide_for_me": bool(self.decide_for_me),
+            "is_llm_generated": bool(self.is_llm_generated),
         }
 
     @staticmethod
-    def from_dict(d: Mapping[str, Any]) -> "HumanAnswer":
+    def from_dict(d: Mapping[str, object]) -> "QuestionAnswer":
+        """Parses a QuestionAnswer from a dict-like mapping."""
         q = str(d.get("question") or "").strip()
         a = str(d.get("answer") or "")
-        return HumanAnswer(question=q, answer=a)
+
+        raw_dfm = d.get("decide_for_me")
+        if isinstance(raw_dfm, bool):
+            decide_for_me = raw_dfm
+        else:
+            decide_for_me = (a.strip() == "")
+
+        # Keep the data consistent: blank answer implies decide_for_me.
+        if a.strip() == "":
+            decide_for_me = True
+
+        raw_llm = d.get("is_llm_generated")
+        is_llm_generated = raw_llm if isinstance(raw_llm, bool) else False
+
+        return QuestionAnswer(
+            question=q,
+            answer=a,
+            decide_for_me=decide_for_me,
+            is_llm_generated=is_llm_generated,
+        )
 
 
 @dataclass(frozen=True, slots=True)
-class HumanAnswerBatch:
-    """A batch of human answers for a single validation round."""
+class ClarificationBatch:
+    """A batch of QuestionAnswers for a single validation round."""
 
     round_no: int
-    answers: list[HumanAnswer]
+    answers: list[QuestionAnswer]
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
+        """Converts the batch into a JSON-serializable mapping."""
         return {
             "round": int(self.round_no),
             "answers": [a.to_dict() for a in self.answers],
         }
 
     @staticmethod
-    def from_dict(d: Mapping[str, Any]) -> "HumanAnswerBatch":
-        round_no = int(d.get("round") or 0)
-        raw_answers = d.get("answers")
+    def from_dict(d: Mapping[str, object]) -> "ClarificationBatch":
+        """Parses a ClarificationBatch from a dict-like mapping."""
+        raw_round = d.get("round")
+        if isinstance(raw_round, bool):
+            round_no = 0
+        elif isinstance(raw_round, int):
+            round_no = raw_round
+        elif isinstance(raw_round, str) and raw_round.strip().isdigit():
+            round_no = int(raw_round.strip())
+        else:
+            round_no = 0
 
-        answers: list[HumanAnswer] = []
+        raw_answers = d.get("answers")
+        answers: list[QuestionAnswer] = []
         if isinstance(raw_answers, list):
             for item in raw_answers:
                 if isinstance(item, dict):
-                    answers.append(HumanAnswer.from_dict(item))
+                    # dict is compatible with Mapping[str, object] at runtime
+                    answers.append(QuestionAnswer.from_dict(item))
 
-        return HumanAnswerBatch(round_no=round_no, answers=answers)
+        return ClarificationBatch(round_no=int(round_no), answers=answers)
 
 
 def normalize_answers(
     questions: Iterable[str],
     raw_answers_by_index: Mapping[int, str] | None = None,
-) -> list[HumanAnswer]:
-    """Align answers to a question list.
+) -> list[QuestionAnswer]:
+    """Aligns answers to a question list.
 
-    Missing indexes become empty answers => decide_for_me=True.
+    Missing indexes become blank answers and are stored as decide_for_me=True.
     """
     raw_answers_by_index = raw_answers_by_index or {}
 
-    out: list[HumanAnswer] = []
+    out: list[QuestionAnswer] = []
     for i, q in enumerate(questions):
         qq = str(q).strip()
         if not qq:
             continue
+
+        ans = str(raw_answers_by_index.get(i, "") or "")
         out.append(
-            HumanAnswer(
+            QuestionAnswer(
                 question=qq,
-                answer=str(raw_answers_by_index.get(i, "") or ""),
+                answer=ans,
+                decide_for_me=(ans.strip() == ""),
+                is_llm_generated=False,
             )
         )
+
     return out

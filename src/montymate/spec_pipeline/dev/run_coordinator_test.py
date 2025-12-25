@@ -22,7 +22,7 @@ def main() -> None:
         config=LLMConfig(
             provider="ollama",
             model="nemotron-3-nano:30b",
-            max_tokens=4_000,
+            max_tokens=12_000,
             temperature=0.2,
             extra={"base_url": "http://localhost:11434", "timeout_s": 120.0},
         )
@@ -31,7 +31,7 @@ def main() -> None:
         config=LLMConfig(
             provider="ollama",
             model="nemotron-3-nano:30b",
-            max_tokens=4_000,
+            max_tokens=12_000,
             temperature=0.2,
             extra={"base_url": "http://localhost:11434", "timeout_s": 120.0},
         )

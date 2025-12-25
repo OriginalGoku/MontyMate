@@ -15,7 +15,7 @@ from .constants import (
     SPEC_CRITIC_REPORT_ROUND,
 )
 from .run_state import RunState
-from .human_inputs import HumanAnswerBatch
+from .human_inputs import ClarificationBatch
 from .spec_types import Spec
 
 
@@ -54,8 +54,8 @@ class SpecStore:
     def read_spec(self) -> Spec: ...
     def write_spec(self, spec: Spec, *, tag: str | None = None) -> None: ...
 
-    def write_answers_batch(self, batch: HumanAnswerBatch) -> None: ...
-    def read_answers_batch(self, round_no: int) -> HumanAnswerBatch | None: ...
+    def write_answers_batch(self, batch: ClarificationBatch) -> None: ...
+    def read_answers_batch(self, round_no: int) -> ClarificationBatch | None: ...
 
     def write_critic_report(self, *, round_no: int, report: dict[str, object]) -> None: ...
     def read_critic_report(self, *, round_no: int) -> dict[str, object] | None: ...
@@ -120,22 +120,22 @@ class FileSpecStore:
             (self.paths.run_root / f"module_spec_{tag}.yaml").write_text(text, encoding="utf-8")
 
     # --------------------
-    # Human answers
+    # Answers
     # --------------------
-    def write_answers_batch(self, batch: HumanAnswerBatch) -> None:
+    def write_answers_batch(self, batch: ClarificationBatch) -> None:
         self._ensure_dirs()
         self.paths.spec_answers_json(batch.round_no).write_text(
             json.dumps(batch.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
-    def read_answers_batch(self, round_no: int) -> HumanAnswerBatch | None:
+    def read_answers_batch(self, round_no: int) -> ClarificationBatch | None:
         p = self.paths.spec_answers_json(round_no)
         if not p.exists():
             return None
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
-            return HumanAnswerBatch.from_dict(raw) if isinstance(raw, dict) else None
+            return ClarificationBatch.from_dict(raw) if isinstance(raw, dict) else None
         except Exception:
             return None
 
@@ -164,7 +164,7 @@ class MemorySpecStore:
     def __init__(self) -> None:
         self._state: RunState | None = None
         self._spec: Spec = Spec()
-        self._answers: dict[int, HumanAnswerBatch] = {}
+        self._answers: dict[int, ClarificationBatch] = {}
         self._critic_reports: dict[int, dict[str, object]] = {}
         self._snapshots: dict[str, Spec] = {}
 
@@ -182,10 +182,10 @@ class MemorySpecStore:
         if tag:
             self._snapshots[str(tag)] = spec
 
-    def write_answers_batch(self, batch: HumanAnswerBatch) -> None:
+    def write_answers_batch(self, batch: ClarificationBatch) -> None:
         self._answers[int(batch.round_no)] = batch
 
-    def read_answers_batch(self, round_no: int) -> HumanAnswerBatch | None:
+    def read_answers_batch(self, round_no: int) -> ClarificationBatch | None:
         return self._answers.get(int(round_no))
 
     def write_critic_report(self, *, round_no: int, report: dict[str, object]) -> None:

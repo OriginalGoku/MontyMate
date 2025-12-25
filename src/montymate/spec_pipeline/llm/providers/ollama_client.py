@@ -5,23 +5,15 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
 
-from ..llm_client import ChatMessages, LLMConfig, LLMResult
+from ..llm_client import ChatMessages, LLMConfig, LLMError, LLMResult
 
-
-JsonDict = dict[str, Any]
+JsonDict = dict[str, object]
 
 
 def _post_json(*, url: str, payload: JsonDict, timeout_s: float = 60.0) -> JsonDict:
-    """Sends a JSON POST request and returns a parsed JSON object."""
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         body = resp.read().decode("utf-8", errors="replace")
     obj = json.loads(body) if body else {}
@@ -30,18 +22,6 @@ def _post_json(*, url: str, payload: JsonDict, timeout_s: float = 60.0) -> JsonD
 
 @dataclass(slots=True)
 class OllamaClient:
-    """Calls the Ollama /api/chat endpoint (typically local).
-
-    This client keeps provider configuration on the instance (LLMConfig).
-    Provider-specific settings are read from config.extra.
-
-    Supported config.extra keys (optional):
-    - base_url: str (default: http://localhost:11434)
-    - timeout_s: float (default: 60.0)
-    - options: dict (merged into Ollama "options")
-    - request: dict (merged into request payload)
-    """
-
     config: LLMConfig
 
     def chat(self, *, messages: ChatMessages) -> LLMResult:
@@ -49,11 +29,7 @@ class OllamaClient:
         timeout_s = float(self.config.extra.get("timeout_s") or 60.0)
         url = f"{base_url}/api/chat"
 
-        payload: JsonDict = {
-            "model": self.config.model,
-            "messages": list(messages),
-            "stream": False,
-        }
+        payload: JsonDict = {"model": self.config.model, "messages": list(messages), "stream": False}
 
         options: JsonDict = {}
         extra_options = self.config.extra.get("options")
@@ -63,7 +39,6 @@ class OllamaClient:
         if self.config.temperature is not None:
             options.setdefault("temperature", float(self.config.temperature))
         if self.config.max_tokens is not None:
-            # Ollama uses num_predict for output token budget.
             options.setdefault("num_predict", int(self.config.max_tokens))
 
         if options:
@@ -77,27 +52,33 @@ class OllamaClient:
             raw = _post_json(url=url, payload=payload, timeout_s=timeout_s)
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else str(e)
-            raise RuntimeError(f"Ollama HTTPError {getattr(e, 'code', None)}: {body}") from e
+            raise LLMError("Ollama HTTPError", data={"code": getattr(e, "code", None), "body": body}) from e
         except urllib.error.URLError as e:
-            raise RuntimeError(f"Ollama URLError: {e}") from e
-        
-        if raw.get("error"):
-            raise RuntimeError(f"Ollama error: {raw['error']}")
-        
-        
-        # Ollama returns {"message": {"role": "...", "content": "..."}, ...}
-        text = ""
+            raise LLMError("Ollama URLError", data={"error": str(e)}) from e
+
+        err = raw.get("error")
+        if isinstance(err, str) and err.strip():
+            raise LLMError("Ollama error", data={"error": err})
+
         msg = raw.get("message")
-        
+        content = ""
+        thinking = ""
         if isinstance(msg, dict):
-            content = msg.get("content")
-            text = content.strip() if isinstance(content, str) else ""
-        
+            c = msg.get("content")
+            t = msg.get("thinking")
+            if isinstance(c, str):
+                content = c.strip()
+            if isinstance(t, str):
+                thinking = t.strip()
+
+        # If the model hit length before emitting "final", Ollama can return thinking-only.
+        text = content or thinking
         if not text:
-            print(f"ollama_client.py raw output -> {raw}")
-            raise RuntimeError(f"Ollama error: No content in response")
-            
-        # Ollama sometimes returns eval_count / prompt_eval_count instead of OpenAI usage
+            raise LLMError(
+                "Ollama returned empty response text",
+                data={"done_reason": raw.get("done_reason"), "eval_count": raw.get("eval_count")},
+            )
+
         input_tokens = raw.get("prompt_eval_count")
         output_tokens = raw.get("eval_count")
         total_tokens = None
@@ -109,40 +90,9 @@ class OllamaClient:
             text=text,
             provider=self.config.provider,
             model=self.config.model,
-            input_tokens=int(input_tokens) if isinstance(input_tokens, int) else None,
-            output_tokens=int(output_tokens) if isinstance(output_tokens, int) else None,
-            total_tokens=int(total_tokens) if isinstance(total_tokens, int) else None,
+            input_tokens=int(input_tokens) if isinstance(input_tokens, int) else 0,
+            output_tokens=int(output_tokens) if isinstance(output_tokens, int) else 0,
+            total_tokens=int(total_tokens) if isinstance(total_tokens, int) else 0,
             raw=raw,
+            error=None,
         )
-
-def main() -> None:
-    from montymate.spec_pipeline.llm.llm_client import LLMConfig
-
-    client = OllamaClient(
-        config=LLMConfig(
-            provider="ollama",
-            model="Osmosis/Osmosis-Structure-0.6B:latest", 
-            max_tokens=64,
-            temperature=0.0,
-            extra={"base_url": "http://localhost:11434"},
-        )
-    )
-
-    r = client.chat(
-        messages=[
-            {"role": "system", "content": "The assistant replies with a short greeting."},
-            {"role": "user", "content": "Hello world"},
-        ]
-    )
-
-    print("status:", r.status)
-    print("provider:", r.provider)
-    print("model:", r.model)
-    print("text:", r.text.strip())
-    print("input_tokens:", r.input_tokens)
-    print("output_tokens:", r.output_tokens)
-    print("total_tokens:", r.total_tokens)
-
-
-if __name__ == "__main__":
-    main()

@@ -8,7 +8,7 @@ import yaml
 
 from .base import BasePrompt
 from ...data.component_metadata import ComponentMetadata
-from ...data.human_inputs import HumanAnswerBatch
+from ...data.human_inputs import ClarificationBatch
 from ...data.spec_types import Spec
 
 
@@ -27,9 +27,9 @@ def _get_spec_dict(inputs: Mapping[str, object], key: str) -> dict[str, object]:
 
 
 def _get_answers_payload(inputs: Mapping[str, object], key: str) -> dict[str, object]:
-    """Normalizes human answers into a JSON-serializable dict."""
+    """Normalizes answers into a JSON-serializable dict."""
     v = inputs.get(key)
-    if isinstance(v, HumanAnswerBatch):
+    if isinstance(v, ClarificationBatch):
         return dict(v.to_dict())
     if isinstance(v, Mapping):
         return {str(k): v[k] for k in v.keys()}
@@ -59,6 +59,8 @@ def _has_answers_payload(payload: Mapping[str, object]) -> bool:
 
 def _get_spec_payload(inputs: Mapping[str, object], key: str) -> dict[str, object]:
     v = inputs.get(key)
+    if isinstance(v, Spec):
+        return dict(v.to_dict())
     if isinstance(v, Mapping):
         return {str(k): v[k] for k in v.keys()}
     return {}
@@ -66,10 +68,10 @@ def _get_spec_payload(inputs: Mapping[str, object], key: str) -> dict[str, objec
 class SpecAuthorPrompt(BasePrompt):
     """Builds the prompt messages used by the SpecAuthor tool.
 
-    The prompt supports:
-    - Draft phase: no meaningful seed spec exists, so the specification is drafted from scratch.
-    - Revision phase: a meaningful seed spec exists, so the specification is revised with minimal churn.
-    - Answer integration: when human answers are present, answers are integrated and take priority over the seed.
+    Responsibilities:
+    - Draft phase: if seed spec is empty -> draft a full spec from scratch.
+    - Revision phase: if seed spec is meaningful -> revise with minimal churn.
+    - Answer integration: if answers are present -> integrate them, prioritizing human answers.
     """
 
     def __init__(self, *, metadata: ComponentMetadata) -> None:
@@ -85,41 +87,59 @@ class SpecAuthorPrompt(BasePrompt):
         keys_line = ", ".join(Spec.keys())
 
         lines: list[str] = [
+            # Output contract
             f"- Output MUST contain ONLY these keys: {keys_line}",
+            "- Output MUST be valid YAML only.",
+            "- No markdown fences.",
+            "- No extra commentary.",
             "- Output MUST be a complete spec (all keys present).",
             "- All list items MUST be YAML strings. If a list item contains ':' it MUST be quoted.",
+            "",
+            # Global consistency rules
+            "- Keep the spec internally consistent (no contradictions).",
+            "- Do not invent unrelated requirements; stay aligned with the user prompt and any provided answers.",
+            "- Prefer concrete, testable requirements over vague language.",
         ]
 
         if not seed_non_empty:
             lines.extend(
                 [
-                    "- No meaningful seed spec exists, so the task is to draft the specification from scratch.",
-                    "- The spec should be inferred from the user prompt and written as a practical, testable draft.",
-                    "- Reasonable assumptions should be made when details are missing, and those assumptions should be placed in assumptions.",
+                    "",
+                    "Phase: DRAFT",
+                    "- No meaningful seed spec exists: draft the specification from scratch.",
+                    "- Infer a reasonable MVP scope from the user prompt.",
+                    "- When details are missing, make reasonable assumptions and record them under assumptions.",
                 ]
             )
         else:
             lines.extend(
                 [
-                    "- A meaningful seed spec exists, so the task is to revise the seed spec rather than rewrite it.",
-                    "- Churn should be minimized: unchanged items should remain unchanged unless new information requires updates.",
-                    "- The revised spec should remain internally consistent and should not drop existing requirements without a clear reason.",
+                    "",
+                    "Phase: REVISION",
+                    "- A meaningful seed spec exists: revise it rather than rewriting.",
+                    "- Minimize churn: keep unchanged list items unchanged unless new info requires a change.",
+                    "- Do not drop existing requirements without a clear reason.",
                 ]
             )
 
             if answers_present:
                 lines.extend(
                     [
-                        "- Human answers are present and must be integrated into the spec.",
-                        "- If an answer is empty, the component should decide reasonably and update the spec accordingly.",
-                        "- Conflicts between the seed spec and answers should be resolved by updating the spec to reflect the new information. Answers have a higher priority.",
+                        "",
+                        "Answer integration:",
+                        "- Answers are present and MUST be integrated.",
+                        "- Answers have higher priority than the seed spec.",
+                        "- If an answer has decide_for_me=true or is blank, make a reasonable decision and update the spec accordingly.",
+                        "- If an answer is_llm_generated=true, treat it as helpful guidance but still subordinate to any human-provided answers.",
                     ]
                 )
             else:
                 lines.extend(
                     [
-                        "- No new human answers are present, so revisions should focus on clarity, consistency, and completeness.",
-                        "- Wording improvements are allowed, but unnecessary restructuring should be avoided.",
+                        "",
+                        "No answers present:",
+                        "- Improve clarity, completeness, and consistency without unnecessary restructuring.",
+                        "- You may reword items for clarity, but avoid reorganizing lists unless needed for correctness.",
                     ]
                 )
 
@@ -141,7 +161,7 @@ class SpecAuthorPrompt(BasePrompt):
 
         if _has_answers_payload(answers_payload):
             parts.append(
-                "\nHUMAN ANSWERS:\n"
+                "\nCLARIFICATIONS / ANSWERS:\n"
                 + json.dumps(answers_payload, ensure_ascii=False, indent=2).rstrip()
                 + "\n"
             )
@@ -152,121 +172,143 @@ class SpecAuthorPrompt(BasePrompt):
 
 
 
-class SpecCriticPrompt(BasePrompt):
-    """Builds the prompt used by the SpecCritic component.
+class SpecAnswererPrompt(BasePrompt):
+    """Builds the prompt used by the SpecAnswerer component.
 
-    The prompt:
-    - receives a spec (dict-like)
-    - asks for a strict JSON report with issues + targeted questions
+    Purpose:
+    - Receives targeted questions plus optional human-provided answers/constraints.
+    - Produces strict plain-text Q/A/R blocks.
+    - Never contradicts authoritative human answers.
+
+    Modes:
+    - delegate_only (default): answer only items with decide_for_me=true.
+    - answer_all: answer every question; if a human answer exists, repeat it verbatim.
     """
 
     def system_extras(self, *, inputs: Mapping[str, object]) -> str:
-        _ = inputs
-        return (
-            "- Output MUST be a single JSON object only.\n"
-            "- Output MUST contain ONLY these keys: passed, issues, targeted_questions.\n"
-            "- Schema:\n"
-            "  - passed: boolean\n"
-            "  - issues: list of strings\n"
-            "  - targeted_questions: list of strings\n"
-            "- passed is true only if the spec is clear, complete, and implementable without further questions.\n"
-            "- If passed is true, issues MUST be empty and targeted_questions MUST be empty.\n"
-            "- targeted_questions MUST be specific and directly answerable by a human.\n"
-            "- Prefer 3–7 targeted_questions max.\n"
-        )
-        
+        mode = str(inputs.get("mode") or "delegate_only").strip().lower()
+        if mode not in ("delegate_only", "answer_all"):
+            mode = "delegate_only"
+
+        lines: list[str] = [
+            "- Output MUST be valid TEXT only.",
+            "- No markdown fences.",
+            "- No headings, no bullet lists, no numbering, no JSON/YAML.",
+            "- Output MUST contain ONLY Q/A/R blocks as specified below.",
+            "",
+            "Authoritativeness rules:",
+            "- Any input item where decide_for_me=false AND answer is non-empty is an authoritative human constraint.",
+            "- You MUST NOT contradict an authoritative human constraint.",
+            "- If answering a delegated question depends on a human constraint, align with it and mention the alignment in R.",
+            "",
+            "Output format rules (STRICT):",
+            "- Output MUST be a sequence of blocks separated by EXACTLY ONE blank line.",
+            "- Each block MUST be exactly 3 non-empty lines in this order:",
+            "  Q: <question text copied EXACTLY from the input (character-for-character)>",
+            "  A: <answer text (no leading/trailing whitespace)>",
+            "  R: <short reason, 1–2 sentences>",
+            "- Do NOT add extra lines. Do NOT wrap lines. Do NOT add numbering.",
+            "- Do NOT paraphrase or edit the Q line.",
+            "",
+            "Answer content rules:",
+            "- A must be direct and implementation-oriented.",
+            "- R must be short (1–2 sentences) and may state assumptions when needed.",
+            "- If the question cannot be determined from context, choose a reasonable default and state the assumption in R.",
+        ]
+
+        if mode == "delegate_only":
+            lines.extend(
+                [
+                    "",
+                    "Scope rules (delegate_only):",
+                    "- Only output blocks for items with decide_for_me=true.",
+                    "- Do not output blocks for items that already have a non-empty answer in the input.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "Scope rules (answer_all):",
+                    "- Output one block for every input question (in the same order as provided).",
+                    "- If a question already has a non-empty answer in the input, copy that answer EXACTLY into the A line (do not change it) and provide a reason in R.",
+                ]
+            )
+
+        return "\n".join(lines)
+
     def user_message(self, *, inputs: Mapping[str, object]) -> str:
-        spec_payload = _get_spec_payload(inputs, "spec")
+        # Expected inputs:
+        # - inputs["context"] : Mapping, typically {"user_prompt": str, "seed_spec": {...}, "human_answer_constraints": [...]}
+        # - inputs["questions"]: list of dicts like:
+        #   {"question": "...", "answer": "...", "decide_for_me": bool, "is_llm_generated": bool}
+
+        questions = inputs.get("questions")
+        if not isinstance(questions, list):
+            questions = []
+
+        context = inputs.get("context")
+        if not isinstance(context, Mapping):
+            context = {}
+
         return (
-            "MODULE SPEC:\n"
-            + json.dumps(spec_payload, ensure_ascii=False, indent=2).rstrip()
+            "CONTEXT:\n"
+            + json.dumps(dict(context), ensure_ascii=False, indent=2).rstrip()
+            + "\n\n"
+            "QUESTIONS:\n"
+            + json.dumps(list(questions), ensure_ascii=False, indent=2).rstrip()
             + "\n"
         )
         
-        
-from montymate.spec_pipeline.data.component_metadata import ComponentMetadata, OutputFormat
-from montymate.spec_pipeline.data.human_inputs import HumanAnswerBatch
-from montymate.spec_pipeline.data.spec_types import Spec
-from montymate.spec_pipeline.llm.llm_client import ChatMessages
+class SpecCriticPrompt(BasePrompt):
+    """Builds the prompt used by the SpecCritic tool.
 
+    Responsibilities:
+    - Evaluate whether the spec is implementable without further clarification.
+    - If not, produce concrete issues + targeted questions that unblock implementation.
+    """
 
-def _print_messages(title: str, messages: ChatMessages) -> None:
-    """Prints prompt messages in a readable, deterministic form."""
-    print("\n" + "=" * 80)
-    print(title)
-    print("=" * 80)
+    def __init__(self, *, metadata: ComponentMetadata) -> None:
+        self.metadata = metadata
 
-    for i, m in enumerate(messages, start=1):
-        role = str(m.get("role", ""))
-        content = str(m.get("content", ""))
-        print(f"\n--- message #{i} ({role}) ---\n{content}")
+    def system_extras(self, *, inputs: Mapping[str, object]) -> str:
+        _ = inputs
 
+        return "\n".join(
+            [
+                # Output contract
+                "- Output MUST be a single JSON object only.",
+                "- Do NOT wrap in markdown fences.",
+                "- Do NOT include any extra keys or commentary.",
+                "- Output MUST contain ONLY these keys: passed, issues, targeted_questions.",
+                "",
+                "Schema (strict):",
+                "- passed: boolean",
+                "- issues: list of strings",
+                "- targeted_questions: list of strings",
+                "",
+                "Evaluation rules:",
+                "- passed is true only if the spec is clear, internally consistent, and implementable without asking any questions.",
+                "- If passed is true: issues MUST be empty and targeted_questions MUST be empty.",
+                "- If passed is false: issues MUST contain at least 1 item, and targeted_questions MUST contain at least 1 item.",
+                "",
+                "Issue rules:",
+                "- issues should describe missing/ambiguous/contradictory requirements.",
+                "- Each issue should be one sentence and refer to a specific gap (avoid generic statements).",
+                "",
+                "Question rules:",
+                "- targeted_questions MUST be specific and directly answerable by a human.",
+                "- Questions should be minimal: only ask what is necessary to implement correctly.",
+                "- Prefer 3–7 targeted_questions; never exceed 10.",
+                "- Avoid yes/no unless it truly resolves ambiguity; otherwise ask for concrete choices/values.",
+                "- Do not propose implementation details unless the spec needs a decision (e.g., fixed timestep vs rAF).",
+            ]
+        )
 
-def main() -> None:
-    """Runs smoke tests that demonstrate how the prompt changes across phases."""
-    metadata = ComponentMetadata(
-        name="SpecAuthor",
-        output_format=OutputFormat.YAML,
-        description=(
-            "SpecAuthor produces and maintains a structured software specification. "
-            "It outputs a complete specification object in YAML form and keeps the spec internally consistent."
-        ),
-        tags=("spec", "author"),
-    )
-
-    prompt = SpecAuthorPrompt(metadata=metadata)
-
-    # Case 1: Draft phase (no seed, no answers)
-    inputs_case_1: dict[str, object] = {
-        "user_prompt": "Build a CLI that renames files in a folder using a pattern and supports dry-run.",
-    }
-    _print_messages(
-        "CASE 1 — Draft phase (user_prompt only)",
-        prompt.build(inputs=inputs_case_1),
-    )
-
-    # Case 2: Revision phase (seed exists, no answers)
-    seed_spec_2 = Spec.from_dict(
-        {
-            "status": "DRAFT",
-            "goal": "Rename files in a folder using a pattern.",
-            "functional_requirements": ["Support renaming by regex find/replace", "Provide a preview mode"],
-            "constraints": ["Python 3.11+"],
-            "security_concerns": [],
-            "assumptions": ["User has filesystem permissions"],
-            "other_notes": "",
-        }
-    )
-    inputs_case_2: dict[str, object] = {
-        "user_prompt": "Build a CLI that renames files in a folder using a pattern and supports dry-run.",
-        "seed_spec": seed_spec_2,
-    }
-    _print_messages(
-        "CASE 2 — Revision phase (seed_spec, no answers)",
-        prompt.build(inputs=inputs_case_2),
-    )
-
-    # Case 3: Revision phase (seed exists + human answers)
-    batch_3 = HumanAnswerBatch.from_dict(
-        {
-            "round": 1,
-            "answers": [
-                {"question": "Should the tool support recursive folders?", "answer": "Yes, optional flag --recursive."},
-                {"question": "Should it overwrite existing files?", "answer": "No, refuse unless --force is provided."},
-                {"question": "What should happen if answer is empty?", "answer": ""},
-            ],
-        }
-    )
-    inputs_case_3: dict[str, object] = {
-        "user_prompt": "Build a CLI that renames files in a folder using a pattern and supports dry-run.",
-        "seed_spec": seed_spec_2,
-        "answers": batch_3,
-    }
-    _print_messages(
-        "CASE 3 — Revision phase (seed_spec + answers)",
-        prompt.build(inputs=inputs_case_3),
-    )
-
-
-if __name__ == "__main__":
-    main()
+    def user_message(self, *, inputs: Mapping[str, object]) -> str:
+        spec_payload = _get_spec_payload(inputs, "spec")
+        return (
+            "MODULE SPEC (JSON):\n"
+            + json.dumps(spec_payload, ensure_ascii=False, indent=2).rstrip()
+            + "\n"
+        )

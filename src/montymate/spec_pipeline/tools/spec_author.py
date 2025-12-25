@@ -9,6 +9,7 @@ from .base import BaseTool
 from ..data.component_metadata import ComponentMetadata, OutputFormat
 from ..data.human_inputs import HumanAnswerBatch
 from ..data.spec_types import Spec
+from ..data.context import ToolContext
 from ..errors import ToolError
 from ..llm.llm_client import LLMClient
 from ..llm.prompts.prompts import SpecAuthorPrompt
@@ -79,7 +80,7 @@ class SpecAuthorTool(BaseTool):
             data={"expected": "llm arg or inputs['llm'] or tool.default_llm"},
         )
 
-    def run(self, *, inputs: dict[str, object], ctx: object, llm: LLMClient | None = None) -> dict[str, object]:
+    def run(self, *, inputs: dict[str, object], ctx: ToolContext, llm: LLMClient | None = None) -> dict[str, object]:
         _ = ctx  # The context is used indirectly by BaseTool for tracing metadata.
 
         BaseTool.require_non_empty(inputs, "user_prompt")
@@ -107,10 +108,13 @@ class SpecAuthorTool(BaseTool):
         try:
             parsed = yaml.safe_load(raw_yaml) or {}
         except Exception as e:
-            raise ToolError("SpecAuthor returned invalid YAML", data={"error": str(e), "raw": raw_yaml}) from e
+            raise ToolError("SpecAuthor returned invalid YAML", 
+                data={"error": str(e), 
+                    "raw": raw_yaml}) from e
 
         if not isinstance(parsed, dict):
-            raise ToolError("SpecAuthor YAML must be a mapping/object", data={"raw": raw_yaml})
+            raise ToolError("SpecAuthor YAML must be a mapping/object", 
+                data={"raw": raw_yaml})
 
         spec = Spec.from_dict(parsed)
 

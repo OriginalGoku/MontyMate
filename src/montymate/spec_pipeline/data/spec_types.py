@@ -1,7 +1,7 @@
 # spec_types.py
 from __future__ import annotations
 
-from collections.abc import Mapping as AbcMapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from enum import Enum
 
@@ -19,6 +19,11 @@ class Spec:
     constraints: list[str] = field(default_factory=list)
     security_concerns: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+
+    non_goals: list[str] = field(default_factory=list)
+    success_metrics: list[str] = field(default_factory=list)
+    tradeoffs: list[str] = field(default_factory=list)
+
     other_notes: str = ""
 
     @classmethod
@@ -34,7 +39,7 @@ class Spec:
             return x.strip() if isinstance(x, str) else ""
 
         def as_list(x: object) -> list[str]:
-            if not isinstance(x, list):
+            if not isinstance(x, (list, tuple)):
                 return []
             out: list[str] = []
             for item in x:
@@ -46,7 +51,7 @@ class Spec:
             return out
 
         def as_other_notes(x: object) -> str:
-            # Accepts either a string or a list/tuple of strings and normalizes to a single string.
+            """Normalizes other_notes into a single string."""
             if isinstance(x, str):
                 return x.strip()
             if isinstance(x, (list, tuple)):
@@ -73,10 +78,14 @@ class Spec:
             constraints=as_list(d2.get("constraints")),
             security_concerns=as_list(d2.get("security_concerns")),
             assumptions=as_list(d2.get("assumptions")),
+            non_goals=as_list(d2.get("non_goals")),
+            success_metrics=as_list(d2.get("success_metrics")),
+            tradeoffs=as_list(d2.get("tradeoffs")),
             other_notes=as_other_notes(d2.get("other_notes")),
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Converts the spec into a JSON/YAML-serializable mapping."""
         return {
             "status": self.status.value,
             "goal": self.goal,
@@ -84,5 +93,8 @@ class Spec:
             "constraints": list(self.constraints),
             "security_concerns": list(self.security_concerns),
             "assumptions": list(self.assumptions),
+            "non_goals": list(self.non_goals),
+            "success_metrics": list(self.success_metrics),
+            "tradeoffs": list(self.tradeoffs),
             "other_notes": self.other_notes,
         }
